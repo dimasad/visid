@@ -22,8 +22,8 @@ import optax
 import scipy.linalg
 from scipy import interpolate, optimize, signal, stats
 
-import gvispe.stats
-from gvispe import common, estimators, modeling, sde
+import visid.stats
+from visid import common, estimators, modeling, sde
 
 
 class DuffingSDE:
