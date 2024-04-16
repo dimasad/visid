@@ -4,25 +4,26 @@
 import hedeut
 import jax.numpy as jnp
 import jax.scipy as jsp
+import flax.linen as nn
 
 from . import common, stats
 
 
-class GaussianModel:
+class GaussianModel(nn.Module):
     """Discrete-time dynamic system model with Gaussian noise."""
 
-    @hedeut.jax_vectorize_method(signature='(x),(x),(u),(q)->()')
-    def trans_logpdf(self, xnext, x, u, q):
-        mean = self.f(x, u, q)
-        return stats.mvn_logpdf_logchol(xnext, mean, self.lsQ(q, x))
+    @hedeut.jax_vectorize_method(signature='(x),(x),(u)->()')
+    def trans_logpdf(self, xnext, x, u):
+        mean = self.f(x, u)
+        return stats.mvn_logpdf_logchol(xnext, mean, self.lsQ(x))
 
-    @hedeut.jax_vectorize_method(signature='(y),(x),(u),(q)->()')
-    def meas_logpdf(self, y, x, u, q):
-        mean = self.h(x, u, q)
+    @hedeut.jax_vectorize_method(signature='(y),(x),(u)->()')
+    def meas_logpdf(self, y, x, u):
+        mean = self.h(x, u)
         return stats.mvn_logpdf_logchol(y, mean, self.lsR(q, x))
 
-    @hedeut.jax_vectorize_method(signature='(x),(q)->()')
-    def prior_logpdf(self, x, q):
+    @hedeut.jax_vectorize_method(signature='(x)->()')
+    def prior_logpdf(self, x):
         return 0
 
     def isQ(self, q, x=None):
@@ -83,39 +84,39 @@ class LinearGaussianModel(GaussianModel):
         self.nq = self.q_packer.size
         """Number of classical (deterministic) parameters."""
 
-    def A(self, q):
+    def A(self):
         return self.q_packer.unpack(q)['A']
 
-    def B(self, q):
+    def B(self):
         return self.q_packer.unpack(q)['B']
 
-    def C(self, q):
+    def C(self):
         return self.q_packer.unpack(q)['C']
 
-    def D(self, q):
+    def D(self):
         return self.q_packer.unpack(q)['D']
     
-    def lsQ(self, q, x=None):
+    def lsQ(self, x=None):
         vech_log_sQ = self.q_packer.unpack(q)['vech_log_sQ']
         return common.matl(vech_log_sQ)
     
-    def lsR(self, q, x=None):
+    def lsR(self, x=None):
         vech_log_sR = self.q_packer.unpack(q)['vech_log_sR']
         return common.matl(vech_log_sR)
 
-    def ubias(self, q):
+    def ubias(self):
         """Bias in the input for representing an affine system."""
         return 0
 
-    def ybias(self, q):
+    def ybias(self):
         """Bias in the output for representing an affine system."""
         return 0
 
-    @hedeut.jax_vectorize_method(signature='(x),(u),(q)->(x)')
-    def f(self, x, u, q):
+    @hedeut.jax_vectorize_method(signature='(x),(u)->(x)')
+    def f(self, x, u):
         return self.A(q) @ x + self.B(q) @ (u - self.ubias(q))
 
-    @hedeut.jax_vectorize_method(signature='(x),(u),(q)->(y)')
-    def h(self, x, u, q):
+    @hedeut.jax_vectorize_method(signature='(x),(u)->(y)')
+    def h(self, x, u):
         return self.C(q) @ x + self.D(q) @ (u - self.ubias(q)) + self.ybias(q)
 
