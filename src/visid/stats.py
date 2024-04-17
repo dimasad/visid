@@ -1,12 +1,4 @@
-"""Statistical helper functions.
-
-In this module (and package), the following conventions are used:
-
-- The Cholesky factor of R is the lower-triangular matrix L such that 
-  `R = L @ L.T`
-- The LlogD representation of R is the pair of a lower unitriangular matrix L 
-  and a vector logD such that `D = diag(exp(logD))` and `R = L @ D @ L.T`.
-"""
+"""Statistical helper functions."""
 
 
 from inspect import signature
@@ -20,7 +12,12 @@ from scipy import special
 
 @utils.jax_vectorize(signature='(x),(x),(x,x)->()')
 def mvn_logpdf_ichol(x, mu, inv_chol_cov):
-    """Multivariate normal log-density with inverse of Cholesky factor of cov."""
+    """Multivariate normal log-density with inverse of Cholesky factor of cov.
+    
+    inv_chol_cov does not have to be triangular, as long as the covariance R
+    satisfies `inv(R) == inv_chol_cov.T @ inv_chol_cov`, which is equivalent to
+    `R == inv(inv_chol_cov) @ inv(inv_chol_cov).T`.
+    """
     unmasked = ~jnp.isnan(x)
     cte = -0.5 * jnp.log(2 * jnp.pi) * unmasked.sum()
     dev = (x - mu) * unmasked
