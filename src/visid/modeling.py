@@ -13,13 +13,12 @@ from . import common, stats
 
 
 CovarianceSpec = (
-    Literal['log_chol'] | Literal['L_logD_info']
+    Literal['log_chol'] | Literal['L_expD_info']
 )
 """Specifier of covariance matrix representation.
 
-- 'L_logD_info' stands for the `L @ D @ L.T` decomposition of the information 
-  matrix, where L is unitriangular and D is diagonal. To prevent singularities,
-  D is represented by the log of its diagonal elements.
+- 'L_expD_info' stands for the `L @ expm(D) @ L.T` decomposition of the information 
+  matrix, where L is unitriangular and D is diagonal.
 - 'log_chol' stands for the lower-triangular matrix logarithm of the Cholesky 
   factor of the covariance matrix R, that is, 
   `R == expm(log_chol) @ expm(log_chol).T`.
@@ -53,17 +52,19 @@ class TimeInvariantGaussianModel(GaussianModel):
     ny: int
     """Number of outputs."""
 
-    cov_type: CovarianceSpec = 'L_logD_info'
+    cov_type: CovarianceSpec = 'L_expD_info'
     """Type of covariance representation."""
 
     def setup(self):
+        super().setup()
+
         nx = self.nx
         ny = self.ny
         zero_init = nn.initializers.zeros
 
-        if self.cov_type == 'L_logD_info':
-            self.logD_iQ = self.param('logD_iQ', zero_init, (nx,))
-            self.logD_iR = self.param('logD_iR', zero_init, (ny,))
+        if self.cov_type == 'L_expD_info':
+            self.d_iQ = self.param('d_iQ', zero_init, (nx,))
+            self.d_iR = self.param('d_iR', zero_init, (ny,))
             self.L_iQ = self.param('L_iQ', zero_init, (nx, nx))
             self.L_iR = self.param('L_iR', zero_init, (ny, ny))
         elif self.cov_type == 'log_chol':
@@ -73,10 +74,10 @@ class TimeInvariantGaussianModel(GaussianModel):
             raise ValueError(f'Unknown covariance type: {self.cov_type}')
         
     def isQ(self, x=None, u=None):
-        if self.cov_type == 'L_logD_info':
+        if self.cov_type == 'L_expD_info':
             L = jnp.tril(self.L_iQ, k=-1) + jnp.identity(self.nx)
-            sqrt_d = jnp.exp(0.5 * self.logD_iQ)
-            return sqrt_d[:, None] * L
+            sqrt_exp_d = jnp.exp(0.5 * self.d_iQ)
+            return sqrt_exp_d[:, None] * L
         elif self.cov_type == 'log_chol':
             log_chol = jnp.tril(self.log_chol_Q)
             return jsp.linalg.expm(-log_chol)
@@ -84,10 +85,10 @@ class TimeInvariantGaussianModel(GaussianModel):
             raise ValueError(f'Unknown covariance type: {self.cov_type}')
 
     def isR(self, x=None, u=None):
-        if self.cov_type == 'L_logD_info':
+        if self.cov_type == 'L_expD_info':
             L = jnp.tril(self.L_iR, k=-1) + jnp.identity(self.nx)
-            sqrt_d = jnp.exp(0.5 * self.logD_iR)
-            return sqrt_d[:, None] * L
+            sqrt_exp_d = jnp.exp(0.5 * self.d_iR)
+            return sqrt_exp_d[:, None] * L
         elif self.cov_type == 'log_chol':
             log_chol = jnp.tril(self.log_chol_R)
             return jsp.linalg.expm(-log_chol)
@@ -113,9 +114,8 @@ class TimeInvariantGaussianModel(GaussianModel):
         return S @ S.T
 
 
-
 class LinearModel(nn.Module):
-    """Discrete-time linear dynamic system model with Gaussian noise."""
+    """Discrete-time linear dynamic system model."""
 
     nx: int
     """Number of states."""
@@ -126,74 +126,26 @@ class LinearModel(nn.Module):
     ny: int
     """Number of outputs."""
 
-    cov_type: CovarianceSpec = 'L_logD'
-    """Type of covariance representation."""
+    def setup(self):
+        super().setup()
 
+        nx = self.nx
+        nu = self.nu
+        ny = self.ny
 
-    def __init__(self, nx, nu, ny, init_packer=True):
-        self.nx = nx
-        """Number of states."""
-
-        self.nu = nu
-        """Number of exogenous inputs."""
-
-        self.ny = ny
-        """Number of outputs."""
-
-        self.ntrilx = nx * (nx + 1) // 2
-        """Number of elements in lower triangle of nx by nx matrix."""
-
-        self.ntrily = ny * (ny + 1) // 2
-        """Number of elements in lower triangle of ny by ny matrix."""
-
-        self.q_packer = hedeut.Packer(
-            A=(nx, nx),
-            B=(nx, nu),
-            C=(ny, nx),
-            D=(ny, nu),
-            vech_log_sQ=(self.ntrilx,),
-            vech_log_sR=(self.ntrily,),
-        )
-
-        self.nq = self.q_packer.size
-        """Number of classical (deterministic) parameters."""
-
-    def A(self):
-        return self.q_packer.unpack(q)['A']
-
-    def B(self):
-        return self.q_packer.unpack(q)['B']
-
-    def C(self):
-        return self.q_packer.unpack(q)['C']
-
-    def D(self):
-        return self.q_packer.unpack(q)['D']
-    
-    def lsQ(self, x=None):
-        vech_log_sQ = self.q_packer.unpack(q)['vech_log_sQ']
-        return common.matl(vech_log_sQ)
-    
-    def lsR(self, x=None):
-        vech_log_sR = self.q_packer.unpack(q)['vech_log_sR']
-        return common.matl(vech_log_sR)
-
-    def ubias(self):
-        """Bias in the input for representing an affine system."""
-        return 0
-
-    def ybias(self):
-        """Bias in the output for representing an affine system."""
-        return 0
+        self.A = self.param('A', nn.initializers.zeros, (nx, nx))
+        self.B = self.param('B', nn.initializers.zeros, (nx, nu))
+        self.C = self.param('C', nn.initializers.zeros, (ny, nx))
+        self.D = self.param('D', nn.initializers.zeros, (ny, nu))
 
     @utils.jax_vectorize_method(signature='(x),(u)->(x)')
     def f(self, x, u):
-        return self.A(q) @ x + self.B(q) @ (u - self.ubias(q))
+        return self.A @ x + self.B @ u
 
     @utils.jax_vectorize_method(signature='(x),(u)->(y)')
     def h(self, x, u):
-        return self.C(q) @ x + self.D(q) @ (u - self.ubias(q)) + self.ybias(q)
-    
+        return self.C @ x + self.D @ u
 
-class LinearGaussianModel(LinearModel, GaussianModel):
+
+class LinearGaussianModel(TimeInvariantGaussianModel, LinearModel):
     """Discrete-time linear dynamic system model with Gaussian noise."""

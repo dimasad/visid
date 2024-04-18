@@ -54,8 +54,8 @@ def tria2_chol(m1, m2):
     return tria_chol(m1, m2)
 
 
-@hedeut.jax_vectorize(signature='(n),(m)->(p)', exclude=('mode',))
-def conv(a, v, mode='valid'):
+@hedeut.jax_vectorize(signature='(n),(m)->(p)')
+def conv(a, v):
     """Vectorized convolution of a vector with a kernel."""
-    return jnp.convolve(a, v, mode=mode)
+    return jnp.convolve(a, v, mode='valid')
 
