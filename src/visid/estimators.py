@@ -1,14 +1,17 @@
 """Estimation problems and algorithms."""
 
 
+import abc
 import functools
 import typing
 
+import flax.linen as nn
 import hedeut
 import jax
 import jax.flatten_util
 import jax.numpy as jnp
 import jax.scipy as jsp
+import jax_dataclasses as jdc
 import numpy as np
 import numpy.typing as npt
 from scipy import sparse
@@ -16,21 +19,83 @@ from scipy import sparse
 from . import common, stats
 
 
-class Data(typing.NamedTuple):
+@jdc.pytree_dataclass
+class Data:
+    """Data for estimation problems."""
+
     y: npt.NDArray
     """Measurements."""
 
     u: npt.NDArray
     """Exogenous inputs."""
 
-    def zeros_like(self):
-        u = jnp.zeros_like(self.u)
-        y = jnp.zeros_like(self.y)
-        return self.__class__(u=u, y=y)
+
+@jdc.pytree_dataclass
+class StatePathPosterior(abc.ABC):
+
+    @property
+    @abc.abstractmethod
+    def entropy(self):
+        """Entropy of the state posterior."""
 
 
-class XCoeff(typing.NamedTuple):
-    """Tuple of coeffs for expectation wrt the state at each time sample."""
+class VIBase:
+    """Base class for Variational Inference estimators."""
+
+    def elbo(self, data: Data, seed=None):
+        """Compute the Evidence Lower Bound."""
+        # Obtain the posterior assumed density
+        posterior = self.smoother(data)
+
+        # Sample from the assumed density
+        xmarg, wmarg = self.sampler.marginals(posterior, seed)
+        xpair, wpair = self.sampler.pairs(posterior, seed)
+
+        # Compute the elements of the complete-data log-density
+        trans = self.model.avg_path_trans_logpdf(*xpair, data.u, wmarg)
+        meas = self.model.avg_path_meas_logpdf(data.y, xmarg, data.u, wpair)
+
+        # Add all terms and return
+        return trans + meas + posterior.entropy
+    
+    def __call__(self, data: Data, seed=None):
+        """Loss function for minimization."""
+        return -self.elbo(data, seed)
+
+
+@jdc.pytree_dataclass
+class GaussianStatePathPosteriorBase(StatePathPosterior):
+    """Posterior distribution of a state path."""
+
+    mu: npt.NDArray
+    """State samples."""
+
+    def sample_marg(self, norm_dev):
+        """Sample the states from the marginal posterior at each time index."""
+        dev = self.scale_marg_samples(norm_dev)
+        if dev.ndim == 2:
+            dev = dev[:, None]
+        return self.mu + dev
+
+    def sample_xpair(self, norm_dev_next, norm_dev_curr):
+        """Sample the states from the marginal posterior at each time index."""
+        dev_pair = self.scale_marg_samples(norm_dev_next, norm_dev_curr)
+        if dev_pair[0].ndim == 2:
+            dev_pair = [dev[:, None] for dev in dev_pair]
+        return [self.mu + dev for dev in dev_pair]
+
+    @abc.abstractmethod
+    def scale_marg_samples(self, norm_dev):
+        """Scale normalized deviations from mean by the state marginals."""
+
+    @abc.abstractmethod
+    def scale_xpair_samples(self, norm_dev_next, norm_dev_curr):
+        """Scale normalized deviations from mean of consecutive state pairs."""
+
+
+@jdc.pytree_dataclass
+class XCoeff:
+    """Coefficients for expectation wrt the state at each time sample."""
 
     us_dev: npt.NDArray
     """Unscaled deviations of the state."""
@@ -38,14 +103,10 @@ class XCoeff(typing.NamedTuple):
     w: npt.NDArray | float
     """Expectation weights."""
 
-    def zeros_like(self):
-        us_dev = jnp.zeros_like(self.us_dev)
-        w = jnp.zeros_like(self.w)
-        return self.__class__(us_dev, w)
 
-
-class XPairCoeff(typing.NamedTuple):
-    """Tuple of coeffs for expectation wrt pairs of consecutive states."""
+@jdc.pytree_dataclass
+class XPairCoeff:
+    """Coefficients for expectation wrt pairs of consecutive states."""
 
     curr_us_dev: npt.NDArray
     """Unscaled deviations of the current state."""
@@ -56,31 +117,11 @@ class XPairCoeff(typing.NamedTuple):
     w: npt.NDArray
     """Expectation weights."""
 
-    def zeros_like(self):
-        curr_us_dev = jnp.zeros_like(self.curr_us_dev)
-        next_us_dev = jnp.zeros_like(self.next_us_dev)
-        w = jnp.zeros_like(self.w)
-        return self.__class__(curr_us_dev, next_us_dev, w)
-
 
 class ExpectationCoeff(typing.NamedTuple):
-    """Tuple of coefficients for expectation wrt posterior distributions."""
+    """Coefficients for expectation wrt posterior distributions."""
     x: XCoeff
     xpair: XPairCoeff
-
-    def zeros_like(self):
-        x = self.x.zeros_like()
-        xpair = self.xpair.zeros_like()
-        return self.__class__(x, xpair)
-
-
-class GVIProblemVariables(typing.NamedTuple):
-    """Represents decision variables and/or derived quantities."""
-    xbar: npt.NDArray
-    log_S_cond: npt.NDArray
-    S: npt.NDArray
-    S_cond: npt.NDArray
-    S_cross: npt.NDArray
 
 
 class GVI:
