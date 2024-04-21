@@ -12,16 +12,13 @@ import jax.scipy as jsp
 
 from . import common, stats
 
+CovarianceRepr = Literal['log_chol'] | Literal['L_expD_info']
+"""Representation of the covariance matrix `R`.
 
-CovarianceSpec = (
-    Literal['log_chol'] | Literal['L_expD_info']
-)
-"""Specifier of covariance matrix representation.
-
-- 'L_expD_info' stands for the `L @ expm(D) @ L.T` decomposition of the information 
-  matrix, where L is unitriangular and D is diagonal.
+- 'L_expD_info' stands for the `inv(R) == L @ expm(D) @ L.T` decomposition of 
+  the information matrix, where L is unitriangular and D is diagonal.
 - 'log_chol' stands for the lower-triangular matrix logarithm of the Cholesky 
-  factor of the covariance matrix R, that is, 
+  factor of the covariance matrix, that is,
   `R == expm(log_chol) @ expm(log_chol).T`.
 """
 
@@ -89,7 +86,7 @@ class TimeInvariantGaussianModel(GaussianModel):
     ny: int
     """Number of outputs."""
 
-    cov_type: CovarianceSpec = 'L_expD_info'
+    cov_repr: CovarianceRepr = 'L_expD_info'
     """Type of covariance representation."""
 
     def setup(self):
@@ -99,38 +96,38 @@ class TimeInvariantGaussianModel(GaussianModel):
         ny = self.ny
         zero_init = nn.initializers.zeros
 
-        if self.cov_type == 'L_expD_info':
+        if self.cov_repr == 'L_expD_info':
             self.d_iQ = self.param('d_iQ', zero_init, (nx,))
             self.d_iR = self.param('d_iR', zero_init, (ny,))
             self.L_iQ = self.param('L_iQ', zero_init, (nx, nx))
             self.L_iR = self.param('L_iR', zero_init, (ny, ny))
-        elif self.cov_type == 'log_chol':
+        elif self.cov_repr == 'log_chol':
             self.log_chol_Q = self.param('log_chol_Q', zero_init, (nx, nx))
             self.log_chol_R = self.param('log_chol_R', zero_init, (ny, ny))
         else:
-            raise ValueError(f'Unknown covariance type: {self.cov_type}')
+            raise ValueError(f'Unknown covariance type: {self.cov_repr}')
         
     def isQ(self, x=None, u=None):
-        if self.cov_type == 'L_expD_info':
+        if self.cov_repr == 'L_expD_info':
             L = jnp.tril(self.L_iQ, k=-1) + jnp.identity(self.nx)
             sqrt_exp_d = jnp.exp(0.5 * self.d_iQ)
             return sqrt_exp_d[:, None] * L
-        elif self.cov_type == 'log_chol':
+        elif self.cov_repr == 'log_chol':
             log_chol = jnp.tril(self.log_chol_Q)
             return jsp.linalg.expm(-log_chol)
         else:
-            raise ValueError(f'Unknown covariance type: {self.cov_type}')
+            raise ValueError(f'Unknown covariance type: {self.cov_repr}')
 
     def isR(self, x=None, u=None):
-        if self.cov_type == 'L_expD_info':
+        if self.cov_repr == 'L_expD_info':
             L = jnp.tril(self.L_iR, k=-1) + jnp.identity(self.nx)
             sqrt_exp_d = jnp.exp(0.5 * self.d_iR)
             return sqrt_exp_d[:, None] * L
-        elif self.cov_type == 'log_chol':
+        elif self.cov_repr == 'log_chol':
             log_chol = jnp.tril(self.log_chol_R)
             return jsp.linalg.expm(-log_chol)
         else:
-            raise ValueError(f'Unknown covariance type: {self.cov_type}')
+            raise ValueError(f'Unknown covariance type: {self.cov_repr}')
         
     def sQ(self, x=None, u=None):
         """Cholesky factor of the state transition noise covariance matrix."""

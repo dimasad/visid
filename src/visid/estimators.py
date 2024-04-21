@@ -4,6 +4,7 @@
 import abc
 import functools
 import typing
+from typing import Literal
 
 import flax.linen as nn
 import hedeut
@@ -64,8 +65,8 @@ class VIBase:
 
 
 @jdc.pytree_dataclass
-class GaussianStatePathPosteriorBase(StatePathPosterior):
-    """Posterior distribution of a state path."""
+class GaussianStatePathBase(StatePathPosterior):
+    """Base class for Gaussian state-path posteriors."""
 
     mu: npt.NDArray
     """State samples."""
@@ -91,6 +92,80 @@ class GaussianStatePathPosteriorBase(StatePathPosterior):
     @abc.abstractmethod
     def scale_xpair_samples(self, norm_dev_next, norm_dev_curr):
         """Scale normalized deviations from mean of consecutive state pairs."""
+
+
+CovarianceRepr = Literal['log_chol'] | Literal['L_expD']
+"""Covariance matrix representation.
+
+- 'L_expD' stands for the `R = L @ expm(D) @ L.T` decomposition of the
+  covariance matrix, where L is unitriangular and D is diagonal.
+- 'log_chol' stands for the lower-triangular matrix logarithm of the Cholesky 
+  factor of the covariance matrix R, that is,
+  `R == expm(log_chol) @ expm(log_chol).T`.
+"""
+
+Tria = Literal['qr'] | Literal['chol']
+"""Matrix triangularization routine."""
+
+@jdc.pytree_dataclass
+class GaussianSteadyStatePosteriorBase(GaussianStatePathBase):
+    """Gaussian steady-state state-path using representation."""
+
+    mu: npt.NDArray
+    """State path mean."""
+
+    cond_scale: tuple[npt.NDArray, npt.NDArray] | npt.NDArray
+    """Scaling of the conditional state of a time sample, given the previous."""
+
+    cross: npt.NDArray
+    """Normalized cross-correlation between consecutive states."""
+
+    cov_repr: jdc.Static[CovarianceRepr] = 'L_expD'
+    """Representation of the covariance matrix."""
+
+    tria = jdc.Static[Tria] = 'qr'
+    """Matrix triangularization routine."""
+
+    def scale_marg_samples(self, norm_dev):
+        return jnp.inner(norm_dev, self.chol_marg_cov)
+
+    def scale_xpair_samples(self, norm_dev_next, norm_dev_curr):
+        return (jnp.inner(norm_dev_curr, self.cross)
+                + jnp.inner(norm_dev_next, self.chol_cond_cov))
+    
+    @property
+    def chol_cond_cov(self):
+        """Cholesky factor of the conditional covariance."""
+        if self.cov_repr == 'L_expD':
+            L, d = self.cond_scale
+            L = jnp.tril(L, k=-1) + jnp.identity(len(d))
+            return L @ jnp.diag(jnp.exp(0.5 * d))
+        elif self.cov_repr == 'log_chol':
+            return jsp.linalg.expm(jnp.tril(self.cond_scale))
+        else:
+            raise ValueError("Invalid covariance representation.")
+
+    @property
+    def chol_marg_cov(self):
+        """Cholesky factor of the marginal covariance."""
+        if self.tria == 'qr':
+            return common.tria2_qr(self.chol_cond_cov, self.cross)
+        elif self.tria == 'chol':
+            return common.tria2_chol(self.chol_cond_cov, self.cross)
+        else:
+            raise ValueError("Invalid triangularization routine.")
+        
+    @property
+    def entropy(self):
+        """Entropy of the state-path posterior."""
+        N = len(self.mu)
+        if self.cov_repr == 'L_expD':
+            L, d = self.cond_scale
+            return N / 2  * jnp.sum(d)
+        elif self.cov_repr == 'log_chol':
+            return N * jnp.trace(self.cond_scale)
+        else:
+            raise ValueError("Invalid covariance representation.")
 
 
 @jdc.pytree_dataclass
