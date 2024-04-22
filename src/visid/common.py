@@ -2,6 +2,7 @@
 
 
 import hedeut
+import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
@@ -54,8 +55,7 @@ def tria2_chol(m1, m2):
     return tria_chol(m1, m2)
 
 
-@hedeut.jax_vectorize(signature='(n),(m)->(p)')
-def conv(a, v):
+def vconv(sig, K, mode):
     """Vectorized convolution of a vector with a kernel."""
-    return jnp.convolve(a, v, mode='valid')
+    return jax.vmap(lambda kern: jnp.convolve(sig, kern, mode=mode))(K)
 

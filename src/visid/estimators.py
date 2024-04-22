@@ -71,19 +71,21 @@ class GaussianStatePathBase(StatePathPosterior):
     mu: npt.NDArray
     """State samples."""
 
-    def sample_marg(self, norm_dev):
+    def sample_marg(self, us_dev):
         """Sample the states from the marginal posterior at each time index."""
-        dev = self.scale_marg_samples(norm_dev)
+        dev = self.scale_marg_samples(us_dev)
         if dev.ndim == 2:
             dev = dev[:, None]
         return self.mu + dev
 
-    def sample_xpair(self, norm_dev_next, norm_dev_curr):
+    def sample_pairs(self, next_us_dev, curr_us_dev):
         """Sample the states from the marginal posterior at each time index."""
-        dev_pair = self.scale_marg_samples(norm_dev_next, norm_dev_curr)
+        dev_pair = self.scale_marg_samples(next_us_dev, curr_us_dev)
         if dev_pair[0].ndim == 2:
             dev_pair = [dev[:, None] for dev in dev_pair]
-        return [self.mu + dev for dev in dev_pair]
+        xnext = self.mu[1:] + dev_pair[0]
+        xcurr = self.mu[:-1] + dev_pair[1]
+        return xnext, xcurr
 
     @abc.abstractmethod
     def scale_marg_samples(self, norm_dev):
@@ -94,7 +96,7 @@ class GaussianStatePathBase(StatePathPosterior):
         """Scale normalized deviations from mean of consecutive state pairs."""
 
 
-CovarianceRepr = Literal['log_chol'] | Literal['L_expD']
+CovarianceRepr = Literal['log_chol', 'L_expD']
 """Covariance matrix representation.
 
 - 'L_expD' stands for the `R = L @ expm(D) @ L.T` decomposition of the
@@ -104,11 +106,11 @@ CovarianceRepr = Literal['log_chol'] | Literal['L_expD']
   `R == expm(log_chol) @ expm(log_chol).T`.
 """
 
-Tria = Literal['qr'] | Literal['chol']
-"""Matrix triangularization routine."""
+TriaRoutine = Literal['qr', 'chol']
+"""Matrix triangularization routine option."""
 
 @jdc.pytree_dataclass
-class GaussianSteadyStatePosteriorBase(GaussianStatePathBase):
+class GaussianSteadyStatePosterior(GaussianStatePathBase):
     """Gaussian steady-state state-path using representation."""
 
     mu: npt.NDArray
@@ -123,7 +125,7 @@ class GaussianSteadyStatePosteriorBase(GaussianStatePathBase):
     cov_repr: jdc.Static[CovarianceRepr] = 'L_expD'
     """Representation of the covariance matrix."""
 
-    tria = jdc.Static[Tria] = 'qr'
+    tria = jdc.Static[TriaRoutine] = 'qr'
     """Matrix triangularization routine."""
 
     def scale_marg_samples(self, norm_dev):
@@ -166,6 +168,78 @@ class GaussianSteadyStatePosteriorBase(GaussianStatePathBase):
             return N * jnp.trace(self.cond_scale)
         else:
             raise ValueError("Invalid covariance representation.")
+
+
+class LinearConvolutionSmoother(nn.Module):
+    """Linear convolution smoother."""
+
+    nwin: int
+    """Length of the convolution window."""
+
+    nx: int
+    """Number of states."""
+
+    conv_mode: Literal['full', 'same', 'valid'] = 'valid'
+    """Mode argument passed to `jax.numpy.convolve`."""
+
+    cov_repr: CovarianceRepr = 'L_expD'
+    """Representation of the covariance matrix."""
+
+    tria: TriaRoutine = 'qr'
+    """Matrix triangularization routine."""
+
+    def setup(self):
+        nx = self.nx
+        self.cross = self.param('cross', nn.initializers.zeros, (nx, nx))
+        if self.cov_repr == 'L_expD':
+            L = self.param('L', nn.initializers.zeros, (nx, nx))
+            d = self.param('d', nn.initializers.zeros, (nx,))
+            self.cond_scale = (L, d)
+        elif self.cov_repr == 'log_chol':
+            self.cond_scale = self.param('S', nn.initializers.zeros, (nx, nx))
+        else:
+            raise ValueError("Invalid covariance representation.")
+
+    @nn.compact
+    def __call__(self, data: Data):
+        """Apply the linear convolution smoother."""
+        # Retrieve and concatenate the convolution inputs
+        u = getattr(data, 'conv_u', data.u)
+        y = getattr(data, 'conv_y', data.y)
+        sig = jnp.c_[y, u].T
+
+        # Retrieve and initialize the convolution kernel
+        K_shape = (self.nx, len(sig), self.nwin)
+        K = self.param('K', nn.initializers.normal(), K_shape)
+
+        # Apply kernels and sum to obtain mean
+        mu = common.vconv(sig, K, mode=self.conv_mode).sum(1).T
+
+        return GaussianSteadyStatePosterior(
+            mu=mu, cond_scale=self.cond_scale, cross=self.cross,
+            cov_repr=self.cov_repr, tria=self.tria
+        )
+
+
+class SigmaSampler(nn.Module):
+    """Sigma point sampler."""
+
+    nx: int
+    """Number of states."""
+
+    def marginals(self, posterior: GaussianStatePathBase, seed=None):
+        """Sample from the assumed density."""
+        us_dev, w = self.sigmapts(self.nx)
+        x = posterior.sample_marg(us_dev)
+        return x, w
+
+    def pairs(self, posterior: GaussianStatePathBase, seed=None):
+        """Sample from the assumed density."""
+        us_dev, w = self.sigmapts(2*self.nx)
+        next_us_dev = us_dev[:, :self.nx]
+        curr_us_dev = us_dev[:, self.nx:]
+        x = posterior.sample_pairs(next_us_dev, curr_us_dev)
+        return x, w
 
 
 @jdc.pytree_dataclass

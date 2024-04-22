@@ -12,7 +12,7 @@ import jax.scipy as jsp
 
 from . import common, stats
 
-CovarianceRepr = Literal['log_chol'] | Literal['L_expD_info']
+CovarianceRepr = Literal['log_chol', 'L_expD_info']
 """Representation of the covariance matrix `R`.
 
 - 'L_expD_info' stands for the `inv(R) == L @ expm(D) @ L.T` decomposition of 
