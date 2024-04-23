@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
+import optax
 from scipy import interpolate, optimize, signal, sparse, stats
 
 from visid import vi, gvi, modeling
@@ -55,10 +56,9 @@ def program_args():
         help='Square root of diagonal of measurement noise covariance matrix.',
     )
     parser.add_argument(
-        '--nkern', default=50, type=int,
+        '--nkern', default=51, type=int,
         help='Length of convolution smoother kernel.',
     )
-
 
     # Add common benchmark argument groups
     arggroups.add_jax_group(parser)
@@ -145,8 +145,10 @@ class VIModel(vi.VIBase):
     ny: int
     nkern: int
 
+    Data = gvi.LinearConvolutionSmoother.Data
+
     def setup(self):
-        self.model = modeling.LinearModel(self.nx, self.nu, self.ny)
+        self.model = modeling.LinearGaussianModel(self.nx, self.nu, self.ny)
         self.smoother = gvi.LinearConvolutionSmoother(self.nkern, self.nx)
         self.sampler = gvi.SigmaPointSampler(self.nx)
 
@@ -156,4 +158,40 @@ if __name__ == '__main__':
     sys, sys_aug, mats = sample_system(args)
     u, y, x = gen_data(sys_aug, mats, args)
 
+    # Get the indices for skipping the convolution boundaries
+    nskip0 = (args.nkern - 1) // 2
+    nskip1 = args.nkern - 1 - nskip0
+    skip = np.s_[nskip0:-nskip1]
+
+    # Create the PRNG keys
+    key = jax.random.PRNGKey(args.seed)
+    key, init_key = jax.random.split(key)
+
+    # Create the model and data objects
     model = VIModel(args.nx, args.nu, args.ny, args.nkern)
+    data = model.Data(y=y[skip], u=u[skip], conv_u=u, conv_y=y)
+
+    # Initialize the model
+    v = model.init(init_key, data)
+
+    # Create gradient and cost functions
+    objective = jax.jit(jax.value_and_grad(lambda v: model.apply(v, data)))
+
+    # Build the optimizer
+    sched = optax.exponential_decay(1e-2, 100, 0.995)
+    tx = optax.adam(learning_rate=sched)
+    opt_state = tx.init(v)
+
+    # Run the optimization loop
+    for i in range(10000):
+        value, grad = objective(v)
+        updates, opt_state = tx.update(grad, opt_state)
+        v = optax.apply_updates(v, updates)
+
+        # Print progress
+        if i % 100 == 0:
+            print(f'{i}:\t{sched(i):1.1e}\t{value:1.2e}')
+
+    opt_mats = [v['params']['model'][m] for m in 'ABCD']
+    sys_opt = signal.StateSpace(*opt_mats, dt=True)
+    

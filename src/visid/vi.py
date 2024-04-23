@@ -45,10 +45,10 @@ class VIBase(nn.Module):
 
         # Sample from the assumed density
         xmarg, wmarg = self.sampler.marginals(posterior, seed)
-        xpair, wpair = self.sampler.pairs(posterior, seed)
+        *xpair, wpair = self.sampler.pairs(posterior, seed)
 
         # Compute the elements of the complete-data log-density
-        trans = self.model.avg_path_trans_logpdf(*xpair, data.u, wmarg)
+        trans = self.model.avg_path_trans_logpdf(*xpair, data.u[:-1], wmarg)
         meas = self.model.avg_path_meas_logpdf(data.y, xmarg, data.u, wpair)
 
         # Compute the entropy

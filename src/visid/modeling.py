@@ -47,7 +47,7 @@ class StochasticStateSpaceBase(nn.Module):
         if w is None:
             nsamp = len(x)
             w = jnp.ones(nsamp) / nsamp
-        logpdf = jax.vmap(self.path_trans_logpdf, in_axes=(0,None))(xnext, x, u)
+        logpdf = jax.vmap(self.path_trans_logpdf, in_axes=(0,0,None))(xnext,x,u)
         return jnp.sum(w * logpdf, axis=0)
 
     def avg_path_meas_logpdf(self, y, x, u, w=None):
@@ -120,7 +120,7 @@ class TimeInvariantGaussianModel(GaussianModel):
 
     def isR(self, x=None, u=None):
         if self.cov_repr == 'L_expD_info':
-            L = jnp.tril(self.L_iR, k=-1) + jnp.identity(self.nx)
+            L = jnp.tril(self.L_iR, k=-1) + jnp.identity(self.ny)
             sqrt_exp_d = jnp.exp(0.5 * self.d_iR)
             return sqrt_exp_d[:, None] * L
         elif self.cov_repr == 'log_chol':

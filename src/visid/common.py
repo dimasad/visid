@@ -55,7 +55,10 @@ def tria2_chol(m1, m2):
     return tria_chol(m1, m2)
 
 
-def vconv(sig, K, mode):
-    """Vectorized convolution of a vector with a kernel."""
-    return jax.vmap(lambda kern: jnp.convolve(sig, kern, mode=mode))(K)
+def vconv(sig, kern, mode):
+    """Convolution of vectorized signals and kernels."""
+    return jax.vmap(lambda s, k: jnp.convolve(s, k, mode=mode))(sig, kern)
 
+def bvconv(sig, kernels, mode):
+    """Vectorized convolution of a signal with batched kernels."""
+    return jax.vmap(lambda kern: vconv(sig, kern, mode=mode))(kernels)

@@ -43,7 +43,7 @@ class GaussianStatePathBase(StatePathPosterior):
 
     def sample_pairs(self, next_us_dev, curr_us_dev):
         """Sample the states from the marginal posterior at each time index."""
-        dev_pair = self.scale_marg_samples(next_us_dev, curr_us_dev)
+        dev_pair = self.scale_xpair_samples(next_us_dev, curr_us_dev)
         if dev_pair[0].ndim == 2:
             dev_pair = [dev[:, None] for dev in dev_pair]
         xnext = self.mu[1:] + dev_pair[0]
@@ -55,7 +55,7 @@ class GaussianStatePathBase(StatePathPosterior):
         """Scale normalized deviations from mean by the state marginals."""
 
     @abc.abstractmethod
-    def scale_xpair_samples(self, norm_dev_next, norm_dev_curr):
+    def scale_xpair_samples(self, next_us_dev, curr_us_dev):
         """Scale normalized deviations from mean of consecutive state pairs."""
 
 
@@ -75,15 +75,17 @@ class GaussianSteadyStatePosterior(GaussianStatePathBase):
     cov_repr: jdc.Static[CovarianceRepr] = 'L_expD'
     """Representation of the covariance matrix."""
 
-    tria = jdc.Static[TriaRoutine] = 'qr'
+    tria: jdc.Static[TriaRoutine] = 'qr'
     """Matrix triangularization routine."""
 
     def scale_marg_samples(self, norm_dev):
         return jnp.inner(norm_dev, self.chol_marg_cov)
 
-    def scale_xpair_samples(self, norm_dev_next, norm_dev_curr):
-        return (jnp.inner(norm_dev_curr, self.cross)
-                + jnp.inner(norm_dev_next, self.chol_cond_cov))
+    def scale_xpair_samples(self, next_us_dev, curr_us_dev):
+        xcurr_dev = jnp.inner(curr_us_dev, self.chol_marg_cov)
+        xnext_dev = (jnp.inner(curr_us_dev, self.cross)
+                     + jnp.inner(next_us_dev, self.chol_cond_cov))
+        return (xnext_dev, xcurr_dev)
     
     @property
     def chol_cond_cov(self):
@@ -137,6 +139,17 @@ class LinearConvolutionSmoother(nn.Module):
     tria: TriaRoutine = 'qr'
     """Matrix triangularization routine."""
 
+    @jdc.pytree_dataclass
+    class Data(vi.Data):
+        """Data for linear convolution smoother."""
+
+        conv_u: NDArray
+        """Exogenous inputs for convolution."""
+
+        conv_y: NDArray
+        """Measurements for convolution."""
+
+
     def setup(self):
         nx = self.nx
         self.cross = self.param('cross', nn.initializers.zeros, (nx, nx))
@@ -162,7 +175,7 @@ class LinearConvolutionSmoother(nn.Module):
         K = self.param('K', nn.initializers.normal(), K_shape)
 
         # Apply kernels and sum to obtain mean
-        mu = common.vconv(sig, K, mode=self.conv_mode).sum(1).T
+        mu = common.bvconv(sig, K, mode=self.conv_mode).sum(1).T
 
         return GaussianSteadyStatePosterior(
             mu=mu, cond_scale=self.cond_scale, cross=self.cross,
@@ -187,5 +200,5 @@ class SigmaPointSampler(nn.Module):
         us_dev, w = stats.sigmapts(2*self.nx)
         next_us_dev = us_dev[:, :self.nx]
         curr_us_dev = us_dev[:, self.nx:]
-        x = posterior.sample_pairs(next_us_dev, curr_us_dev)
-        return x, w
+        xpair = posterior.sample_pairs(next_us_dev, curr_us_dev)
+        return *xpair, w
