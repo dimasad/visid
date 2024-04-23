@@ -59,6 +59,11 @@ def program_args():
         '--nkern', default=51, type=int,
         help='Length of convolution smoother kernel.',
     )
+    parser.add_argument(
+        '--nimpulse', default=100, type=int,
+        help='Horizon to compute impulse response error ratio.',
+    )
+
 
     # Add common benchmark argument groups
     arggroups.add_jax_group(parser)
@@ -139,6 +144,23 @@ def gen_data(sys_aug, mats, args):
     return u, y, x
 
 
+def sys_from_variables(v):
+    """Create a state-space system from the variables in a VI model."""
+    ABCD = (v['params']['model'][m] for m in 'ABCD')
+    return signal.StateSpace(*ABCD, dt=True)
+
+
+def ier(sys, sys_ref, n):
+    """Average impulse response error ratio."""
+    h = np.array(sys.impulse(n=n)[1])
+    h_ref = np.array(sys_ref.impulse(n=n)[1])
+    err = h - h_ref
+    err_norm = np.sqrt(np.sum(err**2, axis=1))
+    sig_norm = np.sqrt(np.sum(h_ref**2, axis=1))
+    eratio = np.mean(err_norm / sig_norm)
+    return eratio, h, h_ref
+
+
 class VIModel(vi.VIBase):
     nx: int
     nu: int
@@ -189,8 +211,9 @@ if __name__ == '__main__':
         v = optax.apply_updates(v, updates)
 
         # Print progress
-        if i % 100 == 0:
-            print(f'{i}:\t{sched(i):1.1e}\t{value:1.2e}')
+        if i % 30 == 0:
+            eratio = ier(sys_from_variables(v), sys, args.nimpulse)[0]
+            print(f'{i}:\t{sched(i):1.1e}\t{value:1.2e}\t{eratio:1.2e}')
 
     opt_mats = [v['params']['model'][m] for m in 'ABCD']
     sys_opt = signal.StateSpace(*opt_mats, dt=True)
