@@ -35,7 +35,7 @@ class StatePathPosterior(abc.ABC):
         """Entropy of the state posterior."""
 
 
-class VIBase:
+class VIBase(nn.Module):
     """Base class for Variational Inference estimators."""
 
     def elbo(self, data: Data, seed=None):

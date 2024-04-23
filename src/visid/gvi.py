@@ -122,8 +122,8 @@ class GaussianSteadyStatePosterior(GaussianStatePathBase):
 class LinearConvolutionSmoother(nn.Module):
     """Linear convolution smoother."""
 
-    nwin: int
-    """Length of the convolution window."""
+    nkern: int
+    """Length of the convolution kernel."""
 
     nx: int
     """Number of states."""
@@ -158,7 +158,7 @@ class LinearConvolutionSmoother(nn.Module):
         sig = jnp.c_[y, u].T
 
         # Retrieve and initialize the convolution kernel
-        K_shape = (self.nx, len(sig), self.nwin)
+        K_shape = (self.nx, len(sig), self.nkern)
         K = self.param('K', nn.initializers.normal(), K_shape)
 
         # Apply kernels and sum to obtain mean
@@ -170,7 +170,7 @@ class LinearConvolutionSmoother(nn.Module):
         )
 
 
-class SigmaSampler(nn.Module):
+class SigmaPointSampler(nn.Module):
     """Sigma point sampler for Gaussian distributions."""
 
     nx: int

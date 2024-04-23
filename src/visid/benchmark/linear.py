@@ -7,13 +7,14 @@ import argparse
 import collections
 import importlib
 
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
 from scipy import interpolate, optimize, signal, sparse, stats
 
-from visid import estimators, modeling
+from visid import vi, gvi, modeling
 from visid.benchmark import arggroups
 
 
@@ -53,6 +54,11 @@ def program_args():
         '--sqrt_r', default=0.1, type=float, nargs='+',
         help='Square root of diagonal of measurement noise covariance matrix.',
     )
+    parser.add_argument(
+        '--nkern', default=50, type=int,
+        help='Length of convolution smoother kernel.',
+    )
+
 
     # Add common benchmark argument groups
     arggroups.add_jax_group(parser)
@@ -133,7 +139,21 @@ def gen_data(sys_aug, mats, args):
     return u, y, x
 
 
+class VIModel(vi.VIBase):
+    nx: int
+    nu: int
+    ny: int
+    nkern: int
+
+    def setup(self):
+        self.model = modeling.LinearModel(self.nx, self.nu, self.ny)
+        self.smoother = gvi.LinearConvolutionSmoother(self.nkern, self.nx)
+        self.sampler = gvi.SigmaPointSampler(self.nx)
+
+
 if __name__ == '__main__':
     args = program_args()
     sys, sys_aug, mats = sample_system(args)
     u, y, x = gen_data(sys_aug, mats, args)
+
+    model = VIModel(args.nx, args.nu, args.ny, args.nkern)
