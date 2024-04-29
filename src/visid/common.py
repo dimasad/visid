@@ -21,11 +21,24 @@ def vech(M: npt.ArrayLike) -> npt.NDArray:
 @hedeut.jax_vectorize(signature='(m)->(n,n)')
 def matl(v: npt.ArrayLike) -> npt.NDArray:
     """Unpack a vector into a square lower triangular matrix."""
-    n = int(np.sqrt(2 * v.size + 0.25) - 0.5)
     assert v.ndim == 1
-    assert n * (n + 1) / 2 == v.size
+    n = matl_size(len(v))
     M = jnp.zeros((n, n))
     return M.at[jnp.triu_indices_from(M)[::-1]].set(v)
+
+
+def matl_size(vech_len: int) -> int:
+    """Number of rows a square matrix `M` given the length of `vech(M)`."""
+    n = int(np.sqrt(2 * vech_len + 0.25) - 0.5)
+    assert n * (n + 1) / 2 == vech_len
+    return n
+
+
+def matl_diag(v: npt.ArrayLike) -> npt.NDArray:
+    """Diagonal elements of the entries in the lower triangle a matrix."""
+    n = matl_size(len(v))
+    i, j = jnp.triu_indices(n)[::-1]
+    return v[i == j]
 
 
 def tria_qr(*args) -> npt.NDArray:
