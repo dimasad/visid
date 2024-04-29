@@ -143,11 +143,11 @@ class LinearConvolutionSmoother(nn.Module):
     class Data(vi.Data):
         """Data for linear convolution smoother."""
 
-        conv_u: NDArray
-        """Exogenous inputs for convolution."""
-
         conv_y: NDArray
         """Measurements for convolution."""
+
+        conv_u: NDArray
+        """Exogenous inputs for convolution."""
 
 
     def setup(self):

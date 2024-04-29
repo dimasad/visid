@@ -40,6 +40,10 @@ def program_args():
         help='Number samples per batch.',
     )
     parser.add_argument(
+        '--Nbatch', default=1000, type=int,
+        help='Number of batches.',
+    )
+    parser.add_argument(
         '--max_pole_radius', default=0.95, type=float,
         help='Largest pole radius for the system.',
     )
@@ -63,7 +67,22 @@ def program_args():
         '--nimpulse', default=100, type=int,
         help='Horizon to compute impulse response error ratio.',
     )
-
+    parser.add_argument(
+        '--lrate0', default=5e-2, type=float,
+        help='Stochastic optimization initial learning rate.',
+    )
+    parser.add_argument(
+        '--transition_steps', default=100, type=float,
+        help='Learning rate "transition_steps" parameter.',
+    )
+    parser.add_argument(
+        '--decay_rate', default=0.995, type=float,
+        help='Learning rate "decay_rate" parameter.',
+    )
+    parser.add_argument(
+        '--epochs', default=100, type=int,
+        help='Optimization epochs.',
+    )
 
     # Add common benchmark argument groups
     arggroups.add_jax_group(parser)
@@ -134,7 +153,8 @@ def sample_system(args):
 
 def gen_data(sys_aug, mats, args):
     # Generate the simulation signals
-    u = np.where(np.random.rand(args.N, args.nu) > 0.5, -1.0, 1.0)
+    Ntotal = args.N * args.Nbatch + args.nkern - 1
+    u = np.where(np.random.rand(Ntotal, args.nu) > 0.5, -1.0, 1.0)
     w = np.random.randn(len(u), args.nx)
     v = mats.sr * np.random.randn(len(u), args.ny)
 
@@ -180,40 +200,56 @@ if __name__ == '__main__':
     sys, sys_aug, mats = sample_system(args)
     u, y, x = gen_data(sys_aug, mats, args)
 
-    # Get the indices for skipping the convolution boundaries
-    nskip0 = (args.nkern - 1) // 2
-    nskip1 = args.nkern - 1 - nskip0
-    skip = np.s_[nskip0:-nskip1]
-
     # Create the PRNG keys
     key = jax.random.PRNGKey(args.seed)
     key, init_key = jax.random.split(key)
 
-    # Create the model and data objects
+    # Instantiate the model
     model = VIModel(args.nx, args.nu, args.ny, args.nkern)
-    data = model.Data(y=y[skip], u=u[skip], conv_u=u, conv_y=y)
+
+    # Create the data objects
+    skip0 = (args.nkern - 1) // 2
+    skip1 = args.nkern - 1 - skip0
+    data = [None] * args.Nbatch
+    for i in range(args.Nbatch):
+        start = i * args.N + skip0
+        end = (i + 1) * args.N + skip0
+        data[i] = model.Data(
+            y=y[start:end], u=u[start:end], 
+            conv_y=y[start-skip0:end+skip1], 
+            conv_u=u[start-skip0:end+skip1],
+        )
 
     # Initialize the model
-    v = model.init(init_key, data)
+    v = model.init(init_key, data[0])
 
     # Create gradient and cost functions
-    objective = jax.jit(jax.value_and_grad(lambda v: model.apply(v, data)))
+    obj_fun = jax.jit(jax.value_and_grad(lambda v, d: model.apply(v, d)))
 
     # Build the optimizer
-    sched = optax.exponential_decay(1e-2, 100, 0.995)
+    sched = optax.exponential_decay(
+        args.lrate0, args.transition_steps, args.decay_rate
+    )
     tx = optax.adam(learning_rate=sched)
     opt_state = tx.init(v)
 
     # Run the optimization loop
-    for i in range(10000):
-        value, grad = objective(v)
-        updates, opt_state = tx.update(grad, opt_state)
-        v = optax.apply_updates(v, updates)
+    steps = 0
+    for e in range(args.epochs):
+        for i in np.random.permutation(args.Nbatch):
+            obj, grad = obj_fun(v, data[i])
+            updates, opt_state = tx.update(grad, opt_state)
+            v = optax.apply_updates(v, updates)
 
-        # Print progress
-        if i % 30 == 0:
-            eratio = ier(sys_from_variables(v), sys, args.nimpulse)[0]
-            print(f'{i}:\t{sched(i):1.1e}\t{value:1.2e}\t{eratio:1.2e}')
+            # Print progress
+            if steps % 100 == 0:
+                eratio = ier(sys_from_variables(v), sys, args.nimpulse)[0]
+                print(
+                    f'{e}', f'{sched(steps):1.1e}', f'{obj:1.2e}', 
+                    f'{eratio:1.2e}', sep='\t'
+                )
+            
+            steps += 1
 
     opt_mats = [v['params']['model'][m] for m in 'ABCD']
     sys_opt = signal.StateSpace(*opt_mats, dt=True)
