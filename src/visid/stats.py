@@ -3,8 +3,10 @@
 
 import abc
 import math
+import typing
 from inspect import signature
 
+import flax.linen as nn
 import hedeut as utils
 import jax
 import jax.numpy as jnp
@@ -34,7 +36,7 @@ class PositiveDefiniteMatrix(abc.ABC):
         """Return the positive-definite matrix."""
 
 
-@jdc.dataclass
+@jdc.pytree_dataclass
 class LogCholMatrix(PositiveDefiniteMatrix):
     """PD matrix represented by the matrix logarithm of its Cholesky factor."""
     
@@ -56,57 +58,133 @@ class LogCholMatrix(PositiveDefiniteMatrix):
     
     def __call__(self):
         """The underlying positive-definite matrix."""
-        return self.chol @ self.chol.T
+        chol_T = self.chol.swapaxes(-1, -2)
+        return self.chol @ chol_T
 
 
-@jdc.dataclass
-class LexpDLTMatrix(PositiveDefiniteMatrix):
-    """PD matrix represented as `P=L@diag(exp(d))@L.T` for unitriangular L."""
+@jdc.pytree_dataclass
+class LDLTMatrix(PositiveDefiniteMatrix):
+    """PD matrix represented by its LDL^T decomposition.
+    
+    The matrix L is unitriangular, and D is diagonal with strictly positive
+    entries. Only the elements below the unit diagonal of L are stored. The
+    logarithm of the diagonal elements of D are stored.
+    """
     
     vech_L: jax.Array
     """Elements strictly below the main diagonal (using function vech) of L."""
 
-    d: jax.Array
-    """Diagonal elements."""
+    log_d: jax.Array
+    """Logarithm of the diagonal elements."""
+
+    def __post_init__(self):
+        """Check that the dimensions of L and D are compatible."""
+        n_d = self.log_d.shape[-1]
+        n_L = common.matl_size(self.vech_L.shape[-1]) + 1
+        assert n_d == n_L, 'Incompatible dimensions for L and D.'
 
     @property
     def logdet(self):
         """Logarithm of the matrix determinant."""
-        return self.d.sum()
+        return self.log_d.sum()
 
     @property
     def _L(self):
         """The underlying unitriangular matrix `L`."""
-        n = common.matl_size(len(self.vech_L)) + 1
-        L = jnp.identity(n)
+        n = self.log_d.shape[-1]
+        base_shape = jnp.broadcast_shapes(
+            self.log_d.shape[:-1], self.vech_L.shape[:-1]
+        )
+        L = jnp.zeros(base_shape + (n, n)).at[...].set(jnp.identity(n))
         return L.at[1:, :-1].set(common.matl(self.vech_L))
 
     @property
     def chol(self):
-        """Lower triangular Cholesky factor `L` of the matrix `P = L @ L.T`."""
-        sqrt_exp_d = jnp.exp(0.5 * self.d)
-        return self._L * sqrt_exp_d[None]
+        """Lower triangular Cholesky factor `S` of the matrix `P = S @ S.T`."""
+        sqrt_d = jnp.exp(0.5 * self.log_d)
+        return self._L * sqrt_d[..., None, :]
     
     def __call__(self):
         """The underlying positive-definite matrix."""
-        exp_D = jnp.diag(jnp.exp(self.d))
+        D = jnp.exp(self.log_d[..., None, :])
         L = self._L
-        return L @ exp_D @ L.T
+        return (L * D) @ L.swapaxes(-1, -2)
 
 
-@utils.jax_vectorize(signature='(x),(x),(x,x),()->()')
-def mvn_logpdf(x, mu, chol_info, logdet_info):
+class LogCholParam(nn.Module):
+    """Positive definite matrix parameter using log-chol representation."""
+
+    n: int
+    """Dimension of the positive definite matrix."""
+
+    extra_shape: tuple[int, ...] = ()
+    """Extra broadcast shape."""
+
+    initializer: nn.initializers.Initializer = nn.initializers.zeros
+    """Initializer for the vech_log_chol parameter."""
+
+    def setup(self):
+        ntril = self.n * (self.n + 1) // 2
+        self.vech_log_chol = self.param(
+            'vech_log_chol', self.initializer, self.extra_shape + (ntril,)
+        )
+
+    def __call__(self):
+        return LogCholMatrix(self.vech_log_chol)
+
+
+class LDLTParam(nn.Module):
+    """Positive definite matrix parameter using LDL^T representation."""
+
+    n: int
+    """Dimension of the positive definite matrix."""
+
+    extra_shape: tuple[int, ...] = ()
+    """Extra broadcast shape."""
+
+    d_initializer: nn.initializers.Initializer = nn.initializers.zeros
+    """Initializer for the d parameter."""
+
+    L_initializer: nn.initializers.Initializer = nn.initializers.zeros
+    """Initializer for the L parameter."""
+
+    def setup(self):
+        ntril = self.n * (self.n - 1) // 2
+        self.log_d = self.param(
+            'log_d', self.d_initializer, self.extra_shape + (self.n,)
+        )
+        self.vech_L = self.param(
+            'vech_L', self.L_initializer, self.extra_shape + (ntril,)
+        )
+
+    def __call__(self):
+        return LDLTMatrix(self.vech_L, self.log_d)
+
+
+def _mvn_logpdf(x, mu, chol_info, logdet_info=None):
     """Multivariate normal log-density using decomposed information matrix.
     
-    The information matrix satisfies `info == chol_info @ chol_info.T` and
+    The information matrix must satisfy `info == chol_info @ chol_info.T` and
     `logdet_info == log(det(info))`.
     """
-    unmasked = ~jnp.isnan(x)
-    cte = -0.5 * jnp.log(2 * jnp.pi) * unmasked.sum()
-    dev = jnp.where(unmasked, x - mu, 0)
-    normalized_dev = chol_info.T @ dev
-    ##### How do we mask logdet???
+    if logdet_info is None:
+        logdet_info = 2 * jnp.sum(jnp.log(chol_info.diagonal()))
+    cte = -0.5 * jnp.log(2 * jnp.pi)
+    normalized_dev = chol_info.T @ (x - mu)
     return -0.5 * jnp.sum(normalized_dev ** 2) + 0.5 * logdet_info + cte
+
+
+def mvn_logpdf_info(x: jax.Array, mu: jax.Array, info: jax.Array):
+    """Multivariate normal log-density using decomposed information matrix."""
+    chol_info = jsp.linalg.cholesky(info)
+    return _mvn_logpdf(x, mu, chol_info)
+
+
+@typing.overload
+def mvn_logpdf_info(x: jax.Array, mu: jax.Array, info: PositiveDefiniteMatrix):
+    chol_info = info.chol
+    logdet_info = info.logdet
+    return _mvn_logpdf(x, mu, chol_info, logdet_info)
 
 
 @utils.jax_vectorize(signature='(x),(x),(x,x)->()')
@@ -117,11 +195,10 @@ def mvn_logpdf_ichol(x, mu, inv_chol_cov):
     satisfies `inv(R) == inv_chol_cov.T @ inv_chol_cov`, which is equivalent to
     `R == inv(inv_chol_cov) @ inv(inv_chol_cov).T`.
     """
-    unmasked = ~jnp.isnan(x)
-    cte = -0.5 * jnp.log(2 * jnp.pi) * unmasked.sum()
-    dev = jnp.where(unmasked, x - mu, 0)
+    cte = -0.5 * jnp.log(2 * jnp.pi)
+    dev = x - mu
     normdev = inv_chol_cov @ dev
-    logdet = jnp.sum(jnp.log(inv_chol_cov.diagonal()) * unmasked)
+    logdet = jnp.sum(jnp.log(inv_chol_cov.diagonal()))
     return -0.5 * jnp.sum(normdev ** 2) + logdet + cte
 
 
