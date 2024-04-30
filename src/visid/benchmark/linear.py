@@ -24,15 +24,15 @@ def program_args():
         description=__doc__, fromfile_prefix_chars='@'
     )
     parser.add_argument(
-        '--nx', default=10, type=int,
+        '--nx', default=4, type=int,
         help='Number of model states.',
     )
     parser.add_argument(
-        '--ny', default=5, type=int,
+        '--ny', default=2, type=int,
         help='Number of model outputs.',
     )
     parser.add_argument(
-        '--nu', default=5, type=int,
+        '--nu', default=2, type=int,
         help='Number of model exogenous inputs.',
     )
     parser.add_argument(
@@ -68,11 +68,11 @@ def program_args():
         help='Horizon to compute impulse response error ratio.',
     )
     parser.add_argument(
-        '--lrate0', default=5e-2, type=float,
+        '--lrate0', default=2e-3, type=float,
         help='Stochastic optimization initial learning rate.',
     )
     parser.add_argument(
-        '--transition_steps', default=100, type=float,
+        '--transition_steps', default=10, type=float,
         help='Learning rate "transition_steps" parameter.',
     )
     parser.add_argument(
@@ -80,7 +80,7 @@ def program_args():
         help='Learning rate "decay_rate" parameter.',
     )
     parser.add_argument(
-        '--epochs', default=100, type=int,
+        '--epochs', default=10, type=int,
         help='Optimization epochs.',
     )
 
@@ -181,7 +181,7 @@ def ier(sys, sys_ref, n):
     return eratio, h, h_ref
 
 
-class VIModel(vi.VIBase):
+class Estimator(vi.VIBase):
     nx: int
     nu: int
     ny: int
@@ -205,7 +205,7 @@ if __name__ == '__main__':
     key, init_key = jax.random.split(key)
 
     # Instantiate the model
-    model = VIModel(args.nx, args.nu, args.ny, args.nkern)
+    estimator = Estimator(args.nx, args.nu, args.ny, args.nkern)
 
     # Create the data objects
     skip0 = (args.nkern - 1) // 2
@@ -214,17 +214,17 @@ if __name__ == '__main__':
     for i in range(args.Nbatch):
         start = i * args.N + skip0
         end = (i + 1) * args.N + skip0
-        data[i] = model.Data(
+        data[i] = estimator.Data(
             y=y[start:end], u=u[start:end], 
             conv_y=y[start-skip0:end+skip1], 
             conv_u=u[start-skip0:end+skip1],
         )
 
     # Initialize the model
-    v = model.init(init_key, data[0])
+    v = estimator.init(init_key, data[0])
 
     # Create gradient and cost functions
-    obj_fun = jax.jit(jax.value_and_grad(lambda v, d: model.apply(v, d)))
+    obj_fun = jax.jit(jax.value_and_grad(lambda v, d: estimator.apply(v, d)))
 
     # Build the optimizer
     sched = optax.exponential_decay(
