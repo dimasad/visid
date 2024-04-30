@@ -12,16 +12,6 @@ import jax.scipy as jsp
 
 from . import common, stats
 
-CovarianceRepr = Literal['log_chol', 'L_expD_info']
-"""Representation of the covariance matrix `R`.
-
-- 'L_expD_info' stands for the `inv(R) == L @ expm(D) @ L.T` decomposition of 
-  the information matrix, where L is unitriangular and D is diagonal.
-- 'log_chol' stands for the lower-triangular matrix logarithm of the Cholesky 
-  factor of the covariance matrix, that is,
-  `R == expm(log_chol) @ expm(log_chol).T`.
-"""
-
 
 class StochasticStateSpaceBase(nn.Module):
     """Base class for stochastic state-space models."""
@@ -59,93 +49,71 @@ class StochasticStateSpaceBase(nn.Module):
         return jnp.sum(w * logpdf, axis=0)
 
 
-class GaussianModel(StochasticStateSpaceBase):
-    """Discrete-time dynamic system model with Gaussian noise."""    
+class MVNTransition(StochasticStateSpaceBase):
+    """Multivariate normal process noise model."""
 
-    @utils.jax_vectorize_method(signature='(x),(x),(u)->()') 
+    nx: int
+    """Number of states."""
+
+    trans_info_repr: stats.PositiveDefiniteRepr = 'ldlt'
+    """Representation of the state transition noise information matrix."""
+
+    def setup(self):
+        super().setup()
+        if self.trans_info_repr == 'ldlt':
+            self.trans_info = stats.LDLTParam(self.nx)
+        elif self.trans_info_repr == 'log_chol':
+            self.trans_info = stats.LogCholParam(self.nx)
+
+    @utils.jax_vectorize_method(signature='(x),(x),(u)->()')
     def trans_logpdf(self, xnext, x, u):
         """Log-density of a state transition, log p(x_{k+1} | x_k, u_k)."""
         mean = self.f(x, u)
-        inv_chol_cov = self.isQ(x, u)
-        return stats.mvn_logpdf_ichol(xnext, mean, inv_chol_cov)
+        return stats.mvn_logpdf_info(xnext, mean, self.trans_info())
+
+
+class MVNMeasurement(StochasticStateSpaceBase):
+    """Multivariate normal measurement noise model."""
+
+    ny: int
+    """Number of outputs."""
+
+    meas_info_repr: stats.PositiveDefiniteRepr = 'ldlt'
+    """Representation of the state measurement noise information matrix."""
+
+    def setup(self):
+        super().setup()
+        if self.meas_info_repr == 'ldlt':
+            self.meas_info = stats.LDLTParam(self.ny)
+        elif self.meas_info_repr == 'log_chol':
+            self.meas_info = stats.LogCholParam(self.ny)
 
     @utils.jax_vectorize_method(signature='(y),(x),(u)->()')
     def meas_logpdf(self, y, x, u):
         """Log-density of a measurement, log p(y_k | x_k, u_k)."""
         mean = self.h(x, u)
-        inv_chol_cov = self.isR(x, u)
-        return stats.mvn_logpdf_ichol(y, mean, inv_chol_cov)
+        return stats.mvn_logpdf_info(y, mean, self.meas_info())
 
 
-class TimeInvariantGaussianModel(GaussianModel):
-    """Discrete-time dynamic system model with time-invariant Gaussian noise."""
-
-    nx: int
-    """Number of states."""
+class GaussianMeasurement(StochasticStateSpaceBase):
+    """Independent Gaussian measurement noise model."""
 
     ny: int
     """Number of outputs."""
 
-    cov_repr: CovarianceRepr = 'L_expD_info'
-    """Type of covariance representation."""
-
     def setup(self):
         super().setup()
+        self.meas_log_sigma = self.param(
+            'meas_log_sigma', nn.initializers.zeros, (self.ny,)
+        )
 
-        nx = self.nx
-        ny = self.ny
-        zero_init = nn.initializers.zeros
-
-        if self.cov_repr == 'L_expD_info':
-            self.d_iQ = self.param('d_iQ', zero_init, (nx,))
-            self.d_iR = self.param('d_iR', zero_init, (ny,))
-            self.L_iQ = self.param('L_iQ', zero_init, (nx, nx))
-            self.L_iR = self.param('L_iR', zero_init, (ny, ny))
-        elif self.cov_repr == 'log_chol':
-            self.log_chol_Q = self.param('log_chol_Q', zero_init, (nx, nx))
-            self.log_chol_R = self.param('log_chol_R', zero_init, (ny, ny))
-        else:
-            raise ValueError(f'Unknown covariance type: {self.cov_repr}')
-        
-    def isQ(self, x=None, u=None):
-        if self.cov_repr == 'L_expD_info':
-            L = jnp.tril(self.L_iQ, k=-1) + jnp.identity(self.nx)
-            sqrt_exp_d = jnp.exp(0.5 * self.d_iQ)
-            return sqrt_exp_d[:, None] * L
-        elif self.cov_repr == 'log_chol':
-            log_chol = jnp.tril(self.log_chol_Q)
-            return jsp.linalg.expm(-log_chol)
-        else:
-            raise ValueError(f'Unknown covariance type: {self.cov_repr}')
-
-    def isR(self, x=None, u=None):
-        if self.cov_repr == 'L_expD_info':
-            L = jnp.tril(self.L_iR, k=-1) + jnp.identity(self.ny)
-            sqrt_exp_d = jnp.exp(0.5 * self.d_iR)
-            return sqrt_exp_d[:, None] * L
-        elif self.cov_repr == 'log_chol':
-            log_chol = jnp.tril(self.log_chol_R)
-            return jsp.linalg.expm(-log_chol)
-        else:
-            raise ValueError(f'Unknown covariance type: {self.cov_repr}')
-        
-    def sQ(self, x=None, u=None):
-        """Cholesky factor of the state transition noise covariance matrix."""
-        return jnp.linalg.inv(self.isQ(x, u))
-
-    def sR(self, x=None, u=None):
-        """Cholesky factor of the measurement noise covariance matrix."""
-        return jnp.linalg.inv(self.isR(x, u))
-
-    def Q(self, x=None, u=None):
-        """State transition noise covariance matrix."""
-        S = self.sQ(x, u)
-        return S @ S.T
-
-    def R(self, x=None, u=None):
-        """Measurement noise covariance matrix."""
-        S = self.sR(x, u)
-        return S @ S.T
+    @utils.jax_vectorize_method(signature='(y),(x),(u)->()')
+    def meas_logpdf(self, y, x, u):
+        """Log-density of a measurement, log p(y_k | x_k, u_k)."""
+        mean = self.h(x, u)
+        unmasked = ~jnp.isnan(y)
+        logpdf = jsp.stats.norm.logpdf(y, mean, jnp.exp(self.meas_log_sigma))
+        return jnp.sum(jnp.where(unmasked, logpdf, 0))
 
 
 class LinearModel(nn.Module):
@@ -181,5 +149,9 @@ class LinearModel(nn.Module):
         return self.C @ x + self.D @ u
 
 
-class LinearGaussianModel(TimeInvariantGaussianModel, LinearModel):
-    """Discrete-time linear dynamic system model with Gaussian noise."""
+class LinearMVNModel(MVNTransition, MVNMeasurement, LinearModel):
+    """Discrete-time linear system model with multivariate normal noise."""
+
+
+class LinearGaussianModel(MVNTransition, GaussianMeasurement, LinearModel):
+    """Discrete-time dynamic system with independent Gaussian measurements."""

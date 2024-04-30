@@ -17,6 +17,9 @@ from scipy import special
 
 from visid import common
 
+PositiveDefiniteRepr = typing.Literal['log_chol', 'ldlt']
+"""Representation of a positive-definite matrix."""
+
 
 class PositiveDefiniteMatrix(abc.ABC):
     """Positive definite matrix base class."""
@@ -96,7 +99,7 @@ class LDLTMatrix(PositiveDefiniteMatrix):
             self.log_d.shape[:-1], self.vech_L.shape[:-1]
         )
         L = jnp.zeros(base_shape + (n, n)).at[...].set(jnp.identity(n))
-        return L.at[1:, :-1].set(common.matl(self.vech_L))
+        return L.at[1:, :-1].add(common.matl(self.vech_L))
 
     @property
     def chol(self):
@@ -161,59 +164,11 @@ class LDLTParam(nn.Module):
         return LDLTMatrix(self.vech_L, self.log_d)
 
 
-def _mvn_logpdf(x, mu, chol_info, logdet_info=None):
-    """Multivariate normal log-density using decomposed information matrix.
-    
-    The information matrix must satisfy `info == chol_info @ chol_info.T` and
-    `logdet_info == log(det(info))`.
-    """
-    if logdet_info is None:
-        logdet_info = 2 * jnp.sum(jnp.log(chol_info.diagonal()))
-    cte = -0.5 * jnp.log(2 * jnp.pi)
-    normalized_dev = chol_info.T @ (x - mu)
-    return -0.5 * jnp.sum(normalized_dev ** 2) + 0.5 * logdet_info + cte
-
-
-def mvn_logpdf_info(x: jax.Array, mu: jax.Array, info: jax.Array):
-    """Multivariate normal log-density using decomposed information matrix."""
-    chol_info = jsp.linalg.cholesky(info)
-    return _mvn_logpdf(x, mu, chol_info)
-
-
-@typing.overload
 def mvn_logpdf_info(x: jax.Array, mu: jax.Array, info: PositiveDefiniteMatrix):
-    chol_info = info.chol
-    logdet_info = info.logdet
-    return _mvn_logpdf(x, mu, chol_info, logdet_info)
-
-
-@utils.jax_vectorize(signature='(x),(x),(x,x)->()')
-def mvn_logpdf_ichol(x, mu, inv_chol_cov):
-    """Multivariate normal log-density with inverse of Cholesky factor of cov.
-    
-    inv_chol_cov does not have to be triangular, as long as the covariance R
-    satisfies `inv(R) == inv_chol_cov.T @ inv_chol_cov`, which is equivalent to
-    `R == inv(inv_chol_cov) @ inv(inv_chol_cov).T`.
-    """
-    cte = -0.5 * jnp.log(2 * jnp.pi)
-    dev = x - mu
-    normdev = inv_chol_cov @ dev
-    logdet = jnp.sum(jnp.log(inv_chol_cov.diagonal()))
-    return -0.5 * jnp.sum(normdev ** 2) + logdet + cte
-
-
-@utils.jax_vectorize(signature='(x),(x),(x,x)->()')
-def mvn_logpdf_logchol(x, mu, log_chol_cov):
-    """Multivariate normal log-density with log-chol covariance matrix.
-    
-    `log_chol_cov` is the matrix logarithm of the Cholesky factor of the 
-    covariance matrix.
-    """
-    inv_chol_cov = jsp.linalg.expm(-log_chol_cov)
-    cte = -0.5 * len(x) * jnp.log(2 * jnp.pi)
-    dev = x - mu
-    normdev = inv_chol_cov @ dev
-    return -0.5 * jnp.sum(normdev ** 2) - jnp.trace(log_chol_cov) + cte
+    """Multivariate normal log-density using information matrix."""
+    cte = -0.5 * len(x) * jnp.log(2 * jnp.pi) 
+    normalized_dev = info.chol.T @ (x - mu)
+    return -0.5 * jnp.sum(normalized_dev ** 2) + 0.5 * info.logdet + cte
 
 
 def ghcub(order, dim):

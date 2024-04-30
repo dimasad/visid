@@ -8,20 +8,10 @@ import jax.flatten_util
 import jax.numpy as jnp
 import jax.scipy as jsp
 import jax_dataclasses as jdc
-from numpy.typing import NDArray
 
 from . import common, stats, vi
 from .vi import Data, SampleWeights, StatePathPosterior
 
-CovarianceRepr = Literal['log_chol', 'L_expD']
-"""Covariance matrix representation.
-
-- 'L_expD' stands for the `R = L @ expm(D) @ L.T` decomposition of the
-  covariance matrix, where L is unitriangular and D is diagonal.
-- 'log_chol' stands for the lower-triangular matrix logarithm of the Cholesky 
-  factor of the covariance matrix R, that is,
-  `R == expm(log_chol) @ expm(log_chol).T`.
-"""
 
 TriaRoutine = Literal['qr', 'chol']
 """Matrix triangularization routine option."""
@@ -31,7 +21,7 @@ TriaRoutine = Literal['qr', 'chol']
 class GaussianStatePathBase(StatePathPosterior):
     """Base class for Gaussian state-path posteriors."""
 
-    mu: NDArray
+    mu: jax.Array
     """State samples."""
 
     def sample_marg(self, us_dev):
@@ -63,17 +53,14 @@ class GaussianStatePathBase(StatePathPosterior):
 class GaussianSteadyStatePosterior(GaussianStatePathBase):
     """Gaussian steady-state state-path using representation."""
 
-    mu: NDArray
+    mu: jax.Array
     """State path mean."""
 
-    cond_scale: tuple[NDArray, NDArray] | NDArray
-    """Scaling of the conditional state of a time sample, given the previous."""
+    cond_cov: stats.PositiveDefiniteMatrix
+    """Conditional covariance of the state at a time, given the previous."""
 
-    cross: NDArray
-    """Normalized cross-correlation between consecutive states."""
-
-    cov_repr: jdc.Static[CovarianceRepr] = 'L_expD'
-    """Representation of the covariance matrix."""
+    norm_cross_cov: jax.Array
+    """Normalized cross covariance between consecutive states."""
 
     tria: jdc.Static[TriaRoutine] = 'qr'
     """Matrix triangularization routine."""
@@ -83,42 +70,30 @@ class GaussianSteadyStatePosterior(GaussianStatePathBase):
 
     def scale_xpair_samples(self, next_us_dev, curr_us_dev):
         xcurr_dev = jnp.inner(curr_us_dev, self.chol_marg_cov)
-        xnext_dev = (jnp.inner(curr_us_dev, self.cross)
-                     + jnp.inner(next_us_dev, self.chol_cond_cov))
+        xnext_dev = (jnp.inner(curr_us_dev, self.norm_cross_cov)
+                     + jnp.inner(next_us_dev, self.cond_cov.chol))
         return (xnext_dev, xcurr_dev)
     
-    @property
-    def chol_cond_cov(self):
-        """Cholesky factor of the conditional covariance."""
-        if self.cov_repr == 'L_expD':
-            L, d = self.cond_scale
-            L = jnp.tril(L, k=-1) + jnp.identity(len(d))
-            return L @ jnp.diag(jnp.exp(0.5 * d))
-        elif self.cov_repr == 'log_chol':
-            return jsp.linalg.expm(jnp.tril(self.cond_scale))
-        else:
-            raise ValueError("Invalid covariance representation.")
-
     @property
     def chol_marg_cov(self):
         """Cholesky factor of the marginal covariance."""
         if self.tria == 'qr':
-            return common.tria2_qr(self.chol_cond_cov, self.cross)
+            return common.tria2_qr(self.cond_cov.chol, self.norm_cross_cov)
         elif self.tria == 'chol':
-            return common.tria2_chol(self.chol_cond_cov, self.cross)
+            return common.tria2_chol(self.cond_cov.chol, self.norm_cross_cov)
         else:
             raise ValueError("Invalid triangularization routine.")
     
-    def entropy(self, xnext: NDArray, xcurr: NDArray, w: SampleWeights):
+    def entropy(self, xnext: jax.Array, xcurr: jax.Array, w: SampleWeights):
         """Entropy of the state-path posterior."""
-        N = len(self.mu)
-        if self.cov_repr == 'L_expD':
-            L, d = self.cond_scale
-            return N / 2  * jnp.sum(d)
-        elif self.cov_repr == 'log_chol':
-            return N * jnp.trace(self.cond_scale)
+        cte = 0.5 * jnp.size(self.mu) * jnp.log(2 * jnp.pi * jnp.e)
+        logdet = self.cond_cov.logdet
+        if logdet.ndim == 0:
+            N = len(self.mu)
+            path_logdet = logdet * N
         else:
-            raise ValueError("Invalid covariance representation.")
+            path_logdet = jnp.sum(logdet, -1)
+        return 0.5 * path_logdet + cte
 
 
 class LinearConvolutionSmoother(nn.Module):
@@ -133,7 +108,7 @@ class LinearConvolutionSmoother(nn.Module):
     conv_mode: Literal['full', 'same', 'valid'] = 'valid'
     """Mode argument passed to `jax.numpy.convolve`."""
 
-    cov_repr: CovarianceRepr = 'L_expD'
+    cov_repr: stats.PositiveDefiniteRepr = 'ldlt'
     """Representation of the covariance matrix."""
 
     tria: TriaRoutine = 'qr'
@@ -143,22 +118,21 @@ class LinearConvolutionSmoother(nn.Module):
     class Data(vi.Data):
         """Data for linear convolution smoother."""
 
-        conv_y: NDArray
+        conv_y: jax.Array
         """Measurements for convolution."""
 
-        conv_u: NDArray
+        conv_u: jax.Array
         """Exogenous inputs for convolution."""
-
 
     def setup(self):
         nx = self.nx
-        self.cross = self.param('cross', nn.initializers.zeros, (nx, nx))
-        if self.cov_repr == 'L_expD':
-            L = self.param('L', nn.initializers.zeros, (nx, nx))
-            d = self.param('d', nn.initializers.zeros, (nx,))
-            self.cond_scale = (L, d)
+        self.norm_cross_cov = self.param(
+            'norm_cross_cov', nn.initializers.zeros, (nx, nx)
+        )
+        if self.cov_repr == 'ldlt':
+            self.cond_cov = stats.LDLTParam(nx)
         elif self.cov_repr == 'log_chol':
-            self.cond_scale = self.param('S', nn.initializers.zeros, (nx, nx))
+            self.cond_cov = stats.LogCholParam(nx)
         else:
             raise ValueError("Invalid covariance representation.")
 
@@ -178,8 +152,8 @@ class LinearConvolutionSmoother(nn.Module):
         mu = common.bvconv(sig, K, mode=self.conv_mode).sum(1).T
 
         return GaussianSteadyStatePosterior(
-            mu=mu, cond_scale=self.cond_scale, cross=self.cross,
-            cov_repr=self.cov_repr, tria=self.tria
+            mu=mu, cond_cov=self.cond_cov(), norm_cross_cov=self.norm_cross_cov,
+            tria=self.tria
         )
 
 
