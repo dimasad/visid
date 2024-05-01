@@ -67,28 +67,13 @@ def program_args():
         '--nimpulse', default=100, type=int,
         help='Horizon to compute impulse response error ratio.',
     )
-    parser.add_argument(
-        '--lrate0', default=2e-3, type=float,
-        help='Stochastic optimization initial learning rate.',
-    )
-    parser.add_argument(
-        '--transition_steps', default=10, type=float,
-        help='Learning rate "transition_steps" parameter.',
-    )
-    parser.add_argument(
-        '--decay_rate', default=0.995, type=float,
-        help='Learning rate "decay_rate" parameter.',
-    )
-    parser.add_argument(
-        '--epochs', default=10, type=int,
-        help='Optimization epochs.',
-    )
 
     # Add common benchmark argument groups
     arggroups.add_jax_group(parser)
     arggroups.add_testing_group(parser)
     arggroups.add_random_group(parser)
     arggroups.add_output_group(parser)
+    arggroups.add_stoch_optim_group(parser)
 
     # Parse command-line arguments
     args = parser.parse_args()
@@ -227,9 +212,7 @@ if __name__ == '__main__':
     obj_fun = jax.jit(jax.value_and_grad(lambda v, d: estimator.apply(v, d)))
 
     # Build the optimizer
-    sched = optax.exponential_decay(
-        args.lrate0, args.transition_steps, args.decay_rate
-    )
+    sched = args.lrate_sched
     tx = optax.adam(learning_rate=sched)
     opt_state = tx.init(v)
 

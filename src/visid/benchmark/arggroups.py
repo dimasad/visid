@@ -6,9 +6,10 @@ import importlib
 
 import numpy as np
 import jax.config
+import optax
 
 
-def add_jax_group(parser):
+def add_jax_group(parser: argparse.ArgumentParser):
     group = parser.add_argument_group('jax', 'JAX configuration.')
     group.add_argument(
         '--jax-x64', dest='jax_x64', action=argparse.BooleanOptionalAction,
@@ -21,7 +22,7 @@ def add_jax_group(parser):
     return group
 
 
-def add_testing_group(parser):
+def add_testing_group(parser: argparse.ArgumentParser):
     group = parser.add_argument_group('testing', 'Interactive testing config.')
     group.add_argument(
         '--reload', default=[], nargs='*', help='Modules to reload'
@@ -29,7 +30,7 @@ def add_testing_group(parser):
     return group
 
 
-def add_random_group(parser):
+def add_random_group(parser: argparse.ArgumentParser):
     group = parser.add_argument_group(
         'random', 'Random number generator configuration.'
     )
@@ -37,7 +38,7 @@ def add_random_group(parser):
     return group
 
 
-def add_output_group(parser):
+def add_output_group(parser: argparse.ArgumentParser):
     group = parser.add_argument_group('output', 'Output configuration.')
     group.add_argument(
         '--matout', type=str, help='File name to save data in MATLAB format.',
@@ -51,6 +52,28 @@ def add_output_group(parser):
     return group
 
 
+def add_stoch_optim_group(parser: argparse.ArgumentParser):
+    group = parser.add_argument_group(
+        'stoch_opt', 'Stochastic Optimization configuration.'
+    )
+    group.add_argument(
+        '--lrate0', default=2e-3, type=float,
+        help='Stochastic optimization initial learning rate.',
+    )
+    group.add_argument(
+        '--transition_steps', default=10, type=float,
+        help='Learning rate "transition_steps" parameter.',
+    )
+    group.add_argument(
+        '--decay_rate', default=0.995, type=float,
+        help='Learning rate "decay_rate" parameter.',
+    )
+    group.add_argument(
+        '--epochs', default=10, type=int,
+        help='Optimization epochs.',
+    )
+
+
 def process(args):
     if 'jax_x64' in args and args.jax_x64:
         jax.config.update('jax_enable_x64', True)
@@ -62,3 +85,7 @@ def process(args):
             importlib.reload(module)
     if 'seed' in args:
         np.random.seed(args.seed)
+    if 'lrate0' in args:
+        args.lrate_sched = optax.exponential_decay(
+            args.lrate0, args.transition_steps, args.decay_rate
+        )
