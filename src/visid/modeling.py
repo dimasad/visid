@@ -111,9 +111,14 @@ class GaussianMeasurement(StochasticStateSpaceBase):
     def meas_logpdf(self, y, x, u):
         """Log-density of a measurement, log p(y_k | x_k, u_k)."""
         mean = self.h(x, u)
+        sigma = jnp.exp(self.meas_log_sigma)
+
+        # Mask out nans
         unmasked = ~jnp.isnan(y)
-        logpdf = jsp.stats.norm.logpdf(y, mean, jnp.exp(self.meas_log_sigma))
-        return jnp.sum(jnp.where(unmasked, logpdf, 0))
+        y_masked = jnp.where(unmasked, y, 0)
+
+        logpdf = jsp.stats.norm.logpdf(y_masked, mean, sigma)
+        return jnp.sum(unmasked * logpdf)
 
 
 class LinearModel(nn.Module):

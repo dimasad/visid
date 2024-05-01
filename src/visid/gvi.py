@@ -142,7 +142,8 @@ class LinearConvolutionSmoother(nn.Module):
         # Retrieve and concatenate the convolution inputs
         u = getattr(data, 'conv_u', data.u)
         y = getattr(data, 'conv_y', data.y)
-        sig = jnp.c_[y, u].T
+        y_masked = jnp.where(jnp.isnan(y), 0, y)
+        sig = jnp.c_[y_masked, u].T
 
         # Retrieve and initialize the convolution kernel
         K_shape = (self.nx, len(sig), self.nkern)

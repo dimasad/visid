@@ -72,6 +72,10 @@ def add_stoch_optim_group(parser: argparse.ArgumentParser):
         '--epochs', default=10, type=int,
         help='Optimization epochs.',
     )
+    group.add_element(
+        '--display-skip', dest='display_skip', type=int, default=100,
+        help='Display optimization progress every `n` iterations.'
+    )
 
 
 def process(args):

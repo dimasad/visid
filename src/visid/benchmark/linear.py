@@ -205,7 +205,7 @@ if __name__ == '__main__':
             conv_u=u[start-skip0:end+skip1],
         )
 
-    # Initialize the model
+    # Initialize the Estimator
     v = estimator.init(init_key, data[0])
 
     # Create gradient and cost functions
@@ -225,7 +225,7 @@ if __name__ == '__main__':
             v = optax.apply_updates(v, updates)
 
             # Print progress
-            if steps % 100 == 0:
+            if steps % args.display_skip == 0:
                 eratio = ier(sys_from_variables(v), sys, args.nimpulse)[0]
                 print(
                     f'{e}', f'{sched(steps):1.1e}', f'{obj:1.2e}', 
