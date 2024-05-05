@@ -24,14 +24,13 @@ class ArrayParam(nn.Module):
     initializer: nn.initializers.Initializer = nn.initializers.zeros
     """Initializer for the vech_log_chol parameter."""
 
-    def __post_init__(self):
+    def setup(self):
         self._free = jnp.broadcast_to(self.free, self.shape)
         """Free entries of the array, broadcasted to `self.shape`."""
 
         self._given = jnp.broadcast_to(self.given, self.shape)
         """Given values of the array, broadcasted to `self.shape`."""
-
-    def setup(self):
+        
         nfree = jnp.sum(self._free)
         self.free_values = self.param('free_values', self.initializer, (nfree,))
 

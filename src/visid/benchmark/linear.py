@@ -6,6 +6,7 @@
 import argparse
 import collections
 import importlib
+import typing
 
 import flax.linen as nn
 import jax
@@ -15,7 +16,7 @@ import numpy as np
 import optax
 from scipy import interpolate, optimize, signal, sparse, stats
 
-from visid import vi, gvi, modeling
+from visid import gvi, modeling, vi
 from visid.benchmark import arggroups
 
 
@@ -46,6 +47,10 @@ def program_args():
     parser.add_argument(
         '--max_pole_radius', default=0.95, type=float,
         help='Largest pole radius for the system.',
+    )
+    parser.add_argument(
+        '--C-given', action=argparse.BooleanOptionalAction, dest='C_given',
+        help='Whether the C matrix is given.',
     )
     parser.add_argument(
         '--D_sparsity', default=0.2, type=float,
@@ -149,10 +154,10 @@ def gen_data(sys_aug, mats, args):
     return u, y, x
 
 
-def sys_from_variables(v):
-    """Create a state-space system from the variables in a VI model."""
-    ABCD = (v['params']['model'][m] for m in 'ABCD')
-    return signal.StateSpace(*ABCD, dt=True)
+def get_sys(estimator):
+    """Create a state-space system from the bound VI estimator."""
+    model = estimator.model
+    return signal.StateSpace(model.A, model.B, model.C, model.D, dt=True)
 
 
 def ier(sys, sys_ref, n):
@@ -171,18 +176,23 @@ class Estimator(vi.VIBase):
     nu: int
     ny: int
     nkern: int
+    C_given: typing.Optional[jax.Array] = None
 
     Data = gvi.LinearConvolutionSmoother.Data
 
     def setup(self):
-        self.model = modeling.LinearGaussianModel(self.nx, self.nu, self.ny)
+        C_given = 0.0 if self.C_given is None else self.C_given
+        C_free = self.C_given is None
+        self.model = modeling.LinearGaussianModel(
+            self.nx, self.nu, self.ny, C_given=C_given, C_free=C_free
+        )
         self.smoother = gvi.LinearConvolutionSmoother(self.nkern, self.nx)
         self.sampler = gvi.SigmaPointSampler(self.nx)
 
 
 if __name__ == '__main__':
     args = program_args()
-    sys, sys_aug, mats = sample_system(args)
+    sys_true, sys_aug, mats = sample_system(args)
     u, y, x = gen_data(sys_aug, mats, args)
 
     # Create the PRNG keys
@@ -190,7 +200,10 @@ if __name__ == '__main__':
     key, init_key = jax.random.split(key)
 
     # Instantiate the model
-    estimator = Estimator(args.nx, args.nu, args.ny, args.nkern)
+    C_given = None if args.C_given else mats.C
+    estimator = Estimator(
+        args.nx, args.nu, args.ny, args.nkern, C_given=C_given
+    )
 
     # Create the data objects
     skip0 = (args.nkern - 1) // 2
@@ -226,7 +239,8 @@ if __name__ == '__main__':
 
             # Print progress
             if steps % args.display_skip == 0:
-                eratio = ier(sys_from_variables(v), sys, args.nimpulse)[0]
+                sys_est = jax.apply(get_sys, estimator)(v)
+                eratio = ier(sys_est, sys_true, args.nimpulse)[0]
                 print(
                     f'{e}', f'{sched(steps):1.1e}', f'{obj:1.2e}', 
                     f'{eratio:1.2e}', sep='\t'
@@ -234,6 +248,4 @@ if __name__ == '__main__':
             
             steps += 1
 
-    opt_mats = [v['params']['model'][m] for m in 'ABCD']
-    sys_opt = signal.StateSpace(*opt_mats, dt=True)
-    
+    sys_opt = jax.apply(get_sys, estimator)(v)

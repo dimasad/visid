@@ -133,28 +133,28 @@ class LinearModel(nn.Module):
     ny: int
     """Number of outputs."""
 
-    A_free: jnp.Array | bool = True
+    A_free: jax.Array | bool = True
     """Which entries of the state transition matrix are free parameters."""
 
-    B_free: jnp.Array | bool = True
+    B_free: jax.Array | bool = True
     """Which entries of the input matrix are free parameters."""
 
-    C_free: jnp.Array | bool = True
+    C_free: jax.Array | bool = True
     """Which entries of the ouput matrix are free parameters."""
 
-    D_free: jnp.Array | bool = True
+    D_free: jax.Array | bool = True
     """Which entries of the feedthrough matrix are free parameters."""
 
-    A_given: jnp.Array | float = 0.0
+    A_given: jax.Array | float = 0.0
     """Given values of the state transition matrix are free parameters."""
 
-    B_given: jnp.Array | float = 0.0
+    B_given: jax.Array | float = 0.0
     """Given values of the input matrix are free parameters."""
 
-    C_given: jnp.Array | float = 0.0
+    C_given: jax.Array | float = 0.0
     """Given values of the ouput matrix are free parameters."""
 
-    D_given: jnp.Array | float = 0.0
+    D_given: jax.Array | float = 0.0
     """Given values of the feedthrough matrix are free parameters."""
 
 
