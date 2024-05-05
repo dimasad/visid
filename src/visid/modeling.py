@@ -133,6 +133,31 @@ class LinearModel(nn.Module):
     ny: int
     """Number of outputs."""
 
+    A_free: jnp.Array | bool = True
+    """Which entries of the state transition matrix are free parameters."""
+
+    B_free: jnp.Array | bool = True
+    """Which entries of the input matrix are free parameters."""
+
+    C_free: jnp.Array | bool = True
+    """Which entries of the ouput matrix are free parameters."""
+
+    D_free: jnp.Array | bool = True
+    """Which entries of the feedthrough matrix are free parameters."""
+
+    A_given: jnp.Array | float = 0.0
+    """Given values of the state transition matrix are free parameters."""
+
+    B_given: jnp.Array | float = 0.0
+    """Given values of the input matrix are free parameters."""
+
+    C_given: jnp.Array | float = 0.0
+    """Given values of the ouput matrix are free parameters."""
+
+    D_given: jnp.Array | float = 0.0
+    """Given values of the feedthrough matrix are free parameters."""
+
+
     def setup(self):
         super().setup()
 
@@ -140,10 +165,26 @@ class LinearModel(nn.Module):
         nu = self.nu
         ny = self.ny
 
-        self.A = self.param('A', nn.initializers.zeros, (nx, nx))
-        self.B = self.param('B', nn.initializers.zeros, (nx, nu))
-        self.C = self.param('C', nn.initializers.zeros, (ny, nx))
-        self.D = self.param('D', nn.initializers.zeros, (ny, nu))
+        self._A = common.ArrayParam((nx, nx), self.A_free, self.A_given)
+        self._B = common.ArrayParam((nx, nu), self.B_free, self.B_given)
+        self._C = common.ArrayParam((ny, nx), self.C_free, self.C_given)
+        self._D = common.ArrayParam((ny, nu), self.D_free, self.D_given)
+
+    @property
+    def A(self):
+        return self._A()
+    
+    @property
+    def B(self):
+        return self._B()
+    
+    @property
+    def C(self):
+        return self._C()
+    
+    @property
+    def D(self):
+        return self._D()
 
     @utils.jax_vectorize_method(signature='(x),(u)->(x)')
     def f(self, x, u):
