@@ -49,6 +49,10 @@ def add_output_group(parser: argparse.ArgumentParser):
     group.add_argument(
         '--txtout', type=argparse.FileType('w'), help='Text output file.',
     )
+    group.add_argument(
+        '--paramsout', type=argparse.FileType('wb', bufsize=0), 
+        help='Parameters output file.',
+    )
     return group
 
 
