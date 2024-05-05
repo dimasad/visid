@@ -1,11 +1,42 @@
 """Common functions and utilities."""
 
 
+import flax.linen as nn
 import hedeut
 import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
+
+
+class ArrayParam(nn.Module):
+    """Array parameter for flax with free and given entries."""
+
+    shape: tuple[int, ...]
+    """Array shape."""
+
+    free: jax.Array | bool = True
+    """Which entries of the array are free parameters."""
+
+    given: jax.Array | float = 0.0
+    """Given values of the array."""
+
+    initializer: nn.initializers.Initializer = nn.initializers.zeros
+    """Initializer for the vech_log_chol parameter."""
+
+    def __post_init__(self):
+        self._free = jnp.broadcast_to(self.free, self.shape)
+        """Free entries of the array, broadcasted to `self.shape`."""
+
+        self._given = jnp.broadcast_to(self.given, self.shape)
+        """Given values of the array, broadcasted to `self.shape`."""
+
+    def setup(self):
+        nfree = jnp.sum(self._free)
+        self.free_values = self.param('free_values', self.initializer, (nfree,))
+
+    def __call__(self):
+        return self._given.at[self._free].set(self.free_values)
 
 
 @hedeut.jax_vectorize(signature='(n,m)->(p)')
