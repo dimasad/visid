@@ -48,8 +48,8 @@ class VIBase(nn.Module):
         *xpair, wpair = self.sampler.pairs(posterior, seed)
 
         # Compute the elements of the complete-data log-density
-        trans = self.model.avg_path_trans_logpdf(*xpair, data.u[:-1], wmarg)
-        meas = self.model.avg_path_meas_logpdf(data.y, xmarg, data.u, wpair)
+        trans = self.model.avg_path_trans_logpdf(*xpair, data.u[:-1], wpair)
+        meas = self.model.avg_path_meas_logpdf(data.y, xmarg, data.u, wmarg)
 
         # Compute the entropy
         entropy = posterior.entropy(*xpair, wpair)
