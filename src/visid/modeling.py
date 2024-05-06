@@ -165,34 +165,18 @@ class LinearModel(nn.Module):
         nu = self.nu
         ny = self.ny
 
-        self._A = common.ArrayParam((nx, nx), self.A_free, self.A_given)
-        self._B = common.ArrayParam((nx, nu), self.B_free, self.B_given)
-        self._C = common.ArrayParam((ny, nx), self.C_free, self.C_given)
-        self._D = common.ArrayParam((ny, nu), self.D_free, self.D_given)
-
-    @property
-    def A(self):
-        return self._A()
-    
-    @property
-    def B(self):
-        return self._B()
-    
-    @property
-    def C(self):
-        return self._C()
-    
-    @property
-    def D(self):
-        return self._D()
+        self.A = common.ArrayParam((nx, nx), self.A_free, self.A_given)
+        self.B = common.ArrayParam((nx, nu), self.B_free, self.B_given)
+        self.C = common.ArrayParam((ny, nx), self.C_free, self.C_given)
+        self.D = common.ArrayParam((ny, nu), self.D_free, self.D_given)
 
     @utils.jax_vectorize_method(signature='(x),(u)->(x)')
     def f(self, x, u):
-        return self.A @ x + self.B @ u
+        return self.A() @ x + self.B() @ u
 
     @utils.jax_vectorize_method(signature='(x),(u)->(y)')
     def h(self, x, u):
-        return self.C @ x + self.D @ u
+        return self.C() @ x + self.D() @ u
 
 
 class LinearMVNModel(MVNTransition, MVNMeasurement, LinearModel):

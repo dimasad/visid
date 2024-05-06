@@ -157,7 +157,8 @@ def gen_data(sys_aug, mats, args):
 def get_sys(estimator):
     """Create a state-space system from the bound VI estimator."""
     model = estimator.model
-    return signal.StateSpace(model.A, model.B, model.C, model.D, dt=True)
+    sys = signal.StateSpace(model.A(), model.B(), model.C(), model.D(), dt=True)
+    return sys
 
 
 def ier(sys, sys_ref, n):
@@ -200,7 +201,7 @@ if __name__ == '__main__':
     key, init_key = jax.random.split(key)
 
     # Instantiate the model
-    C_given = None if args.C_given else mats.C
+    C_given = mats.C if args.C_given else None
     estimator = Estimator(
         args.nx, args.nu, args.ny, args.nkern, C_given=C_given
     )
@@ -239,7 +240,7 @@ if __name__ == '__main__':
 
             # Print progress
             if steps % args.display_skip == 0:
-                sys_est = jax.apply(get_sys, estimator)(v)
+                sys_est = nn.apply(get_sys, estimator)(v)
                 eratio = ier(sys_est, sys_true, args.nimpulse)[0]
                 print(
                     f'{e}', f'{sched(steps):1.1e}', f'{obj:1.2e}', 
@@ -248,4 +249,4 @@ if __name__ == '__main__':
             
             steps += 1
 
-    sys_opt = jax.apply(get_sys, estimator)(v)
+    sys_opt = nn.apply(get_sys, estimator)(v)

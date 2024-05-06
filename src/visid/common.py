@@ -15,7 +15,7 @@ class ArrayParam(nn.Module):
     shape: tuple[int, ...]
     """Array shape."""
 
-    free: jax.Array | bool = True
+    free: np.typing.NDArray | bool = True
     """Which entries of the array are free parameters."""
 
     given: jax.Array | float = 0.0
@@ -25,13 +25,13 @@ class ArrayParam(nn.Module):
     """Initializer for the vech_log_chol parameter."""
 
     def setup(self):
-        self._free = jnp.broadcast_to(self.free, self.shape)
+        self._free = np.broadcast_to(self.free, self.shape)
         """Free entries of the array, broadcasted to `self.shape`."""
 
         self._given = jnp.broadcast_to(self.given, self.shape)
         """Given values of the array, broadcasted to `self.shape`."""
         
-        nfree = jnp.sum(self._free)
+        nfree = self._free.sum()
         self.free_values = self.param('free_values', self.initializer, (nfree,))
 
     def __call__(self):
