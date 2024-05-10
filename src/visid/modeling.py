@@ -121,8 +121,44 @@ class GaussianMeasurement(StochasticStateSpaceBase):
         return jnp.sum(unmasked * logpdf)
 
 
-class LinearModel(nn.Module):
-    """Discrete-time linear dynamic system model."""
+class LinearTransitions(nn.Module):
+    """Discrete-time dynamic system with linear state transition model."""
+
+    nx: int
+    """Number of states."""
+
+    nu: int
+    """Number of exogenous (external) inputs."""
+
+    A_free: jax.Array | bool = True
+    """Which entries of the state transition matrix are free parameters."""
+
+    B_free: jax.Array | bool = True
+    """Which entries of the input matrix are free parameters."""
+
+    A_given: jax.Array | float = 0.0
+    """Given values of the state transition matrix are free parameters."""
+
+    B_given: jax.Array | float = 0.0
+    """Given values of the input matrix are free parameters."""
+
+
+    def setup(self):
+        super().setup()
+
+        nx = self.nx
+        nu = self.nu
+
+        self.A = common.ArrayParam((nx, nx), self.A_free, self.A_given)
+        self.B = common.ArrayParam((nx, nu), self.B_free, self.B_given)
+
+    @utils.jax_vectorize_method(signature='(x),(u)->(x)')
+    def f(self, x, u):
+        return self.A() @ x + self.B() @ u
+
+
+class LinearMeasurements(nn.Module):
+    """Discrete-time dynamic system with linear measurement model."""
 
     nx: int
     """Number of states."""
@@ -133,23 +169,11 @@ class LinearModel(nn.Module):
     ny: int
     """Number of outputs."""
 
-    A_free: jax.Array | bool = True
-    """Which entries of the state transition matrix are free parameters."""
-
-    B_free: jax.Array | bool = True
-    """Which entries of the input matrix are free parameters."""
-
     C_free: jax.Array | bool = True
     """Which entries of the ouput matrix are free parameters."""
 
     D_free: jax.Array | bool = True
     """Which entries of the feedthrough matrix are free parameters."""
-
-    A_given: jax.Array | float = 0.0
-    """Given values of the state transition matrix are free parameters."""
-
-    B_given: jax.Array | float = 0.0
-    """Given values of the input matrix are free parameters."""
 
     C_given: jax.Array | float = 0.0
     """Given values of the ouput matrix are free parameters."""
@@ -165,19 +189,16 @@ class LinearModel(nn.Module):
         nu = self.nu
         ny = self.ny
 
-        self.A = common.ArrayParam((nx, nx), self.A_free, self.A_given)
-        self.B = common.ArrayParam((nx, nu), self.B_free, self.B_given)
         self.C = common.ArrayParam((ny, nx), self.C_free, self.C_given)
         self.D = common.ArrayParam((ny, nu), self.D_free, self.D_given)
-
-    @utils.jax_vectorize_method(signature='(x),(u)->(x)')
-    def f(self, x, u):
-        return self.A() @ x + self.B() @ u
 
     @utils.jax_vectorize_method(signature='(x),(u)->(y)')
     def h(self, x, u):
         return self.C() @ x + self.D() @ u
 
+
+class LinearModel(LinearTransitions, LinearMeasurements):
+    """Discrete-time linear dynamic system model."""
 
 class LinearMVNModel(MVNTransition, MVNMeasurement, LinearModel):
     """Discrete-time linear system model with multivariate normal noise."""
