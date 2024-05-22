@@ -130,6 +130,9 @@ class LinearTransitions(nn.Module):
     nu: int
     """Number of exogenous (external) inputs."""
 
+    ny: int
+    """Number of outputs."""
+
     A_free: jax.Array | bool = True
     """Which entries of the state transition matrix are free parameters."""
 
