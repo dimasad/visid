@@ -96,6 +96,40 @@ class GaussianSteadyStatePosterior(GaussianStatePathBase):
         return 0.5 * path_logdet + cte
 
 
+class SteadyStateSmoother(nn.Module):
+    """Steady-State convolution smoother."""
+
+    nx: int
+    """Number of states."""
+
+    cov_repr: stats.PositiveDefiniteRepr = 'ldlt'
+    """Representation of the covariance matrix."""
+
+    tria: TriaRoutine = 'qr'
+    """Matrix triangularization routine."""
+
+    def setup(self):
+        nx = self.nx
+        self.norm_cross_cov = self.param(
+            'norm_cross_cov', nn.initializers.zeros, (nx, nx)
+        )
+        if self.cov_repr == 'ldlt':
+            self.cond_cov = stats.LDLTParam(nx)
+        elif self.cov_repr == 'log_chol':
+            self.cond_cov = stats.LogCholParam(nx)
+        else:
+            raise ValueError("Invalid covariance representation.")
+
+    @nn.compact
+    def __call__(self, data: Data):
+        """Apply the smoother."""
+        mu = self.param('mu', nn.initializers.normal(), (len(data), self.nx))
+        return GaussianSteadyStatePosterior(
+            mu=mu, cond_cov=self.cond_cov(), norm_cross_cov=self.norm_cross_cov,
+            tria=self.tria
+        )
+
+
 class LinearConvolutionSmoother(nn.Module):
     """Linear convolution smoother."""
 

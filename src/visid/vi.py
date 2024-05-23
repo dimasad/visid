@@ -26,6 +26,11 @@ class Data:
     u: NDArray
     """Exogenous inputs."""
 
+    def __len__(self):
+        """Number of samples."""
+        return len(self.y)
+
+
 
 @jdc.pytree_dataclass
 class StatePathPosterior(abc.ABC):
