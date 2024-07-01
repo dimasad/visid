@@ -31,13 +31,13 @@ pip install --upgrade pip
 For installing this package with CPU-only support, run the command below.
 
 ```
-pip install -e .[cpu,devextra]
+pip install -e .[devextra]
 ```
 
 Alternatively, for installing this package with GPU and CPU support, run the
 commands below.
 
 ```
-pip install -U "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+pip install -U "jax[cuda12]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 pip install -e .[devextra]
 ```

@@ -12,15 +12,15 @@ description = "Variational inference system identification."
 readme = "README.md"
 license = {file = "LICENSE"}
 dependencies = [
-  "numpy",
-  "scipy",
+  "flax",
+  "hedeut",
   "jax",
   "jax_dataclasses",
-  "hedeut",
+  "numpy",
+  "scipy",
 ]
 
 [project.optional-dependencies]
-cpu = ["jax[cpu]"]
 devextra = [
   "ipython",
   "ipdb",
