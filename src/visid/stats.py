@@ -99,7 +99,7 @@ class LDLTMatrix(PositiveDefiniteMatrix):
             self.log_d.shape[:-1], self.vech_L.shape[:-1]
         )
         L = jnp.zeros(base_shape + (n, n)).at[...].set(jnp.identity(n))
-        return L.at[1:, :-1].add(common.matl(self.vech_L))
+        return L.at[..., 1:, :-1].add(common.matl(self.vech_L))
 
     @property
     def chol(self):
