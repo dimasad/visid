@@ -5,7 +5,7 @@ import argparse
 import importlib
 
 import numpy as np
-import jax.config
+import jax
 import optax
 
 
