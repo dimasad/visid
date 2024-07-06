@@ -148,16 +148,6 @@ class LinearConvolutionSmoother(nn.Module):
     tria: TriaRoutine = 'qr'
     """Matrix triangularization routine."""
 
-    @jdc.pytree_dataclass
-    class Data(vi.Data):
-        """Data for linear convolution smoother."""
-
-        conv_y: jax.Array
-        """Measurements for convolution."""
-
-        conv_u: jax.Array
-        """Exogenous inputs for convolution."""
-
     def setup(self):
         nx = self.nx
         self.norm_cross_cov = self.param(
@@ -173,11 +163,15 @@ class LinearConvolutionSmoother(nn.Module):
     @nn.compact
     def __call__(self, data: Data):
         """Apply the linear convolution smoother."""
-        # Retrieve and concatenate the convolution inputs
-        u = getattr(data, 'conv_u', data.u)
-        y = getattr(data, 'conv_y', data.y)
-        y_masked = jnp.where(jnp.isnan(y), 0, y)
-        sig = jnp.c_[y_masked, u].T
+        # Deal with convolution boundaries
+        if self.conv_mode == 'valid':
+            data = data.pad(self.nkern)
+
+        # Mask out missing values
+        y_masked = jnp.where(jnp.isnan(data.y), 0, data.y)
+
+        # Concatenate the convolution inputs
+        sig = jnp.c_[y_masked, data.u].T
 
         # Retrieve and initialize the convolution kernel
         K_shape = (self.nx, len(sig), self.nkern)

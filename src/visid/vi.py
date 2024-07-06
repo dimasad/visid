@@ -8,11 +8,12 @@ import jax.flatten_util
 import jax.numpy as jnp
 import jax.scipy as jsp
 import jax_dataclasses as jdc
-from numpy.typing import NDArray
+from jax import Array
+from jax.experimental import checkify
 
 from . import common, stats
 
-SampleWeights = NDArray | None
+SampleWeights = Array | None
 """Sample weights for computing expectation."""
 
 
@@ -20,23 +21,92 @@ SampleWeights = NDArray | None
 class Data:
     """Data for estimation problems."""
 
-    y: NDArray
+    y_buffer: Array
     """Measurements."""
 
-    u: NDArray
+    u_buffer: Array
     """Exogenous inputs."""
+
+    start: int | None = None
+    """Start of data slice."""
+
+    stop: int | None = None
+    """Stop of data slice."""
 
     def __len__(self):
         """Number of samples."""
         return len(self.y)
+    
+    @property
+    def y(self):
+        """Measurements."""
+        return self.y_buffer[self.start:self.stop]
 
+    @property
+    def u(self):
+        """Measurements."""
+        return self.y_buffer[self.start:self.stop]
+    
+    @classmethod
+    def buffer(cls, y, u, start=None, stop=None):
+        """Convert to jax.Array and build object from buffer."""
+        return cls(jnp.asarray(y), jnp.asarray(u), start, stop)
+    
+    def __getitem__(self, key):
+        """Slice the data."""
+        assert isinstance(key, slice)
+        assert key.step is None
+
+        # Get integer start and stop indices
+        start = self.start or 0
+        stop = self.stop or len(self.y_buffer)
+
+        # Compute new start
+        if key.start is None:
+            new_start = start
+        elif key.start >= 0:
+            new_start = start + key.start
+        elif key.start < 0:
+            new_start = stop + key.start
+
+        # Compute new stop
+        if key.stop is None:
+            new_stop = stop
+        elif key.stop >= 0:
+            new_stop = start + key.stop
+        elif key.stop < 0:
+            new_stop = stop + key.stop
+        
+        # Create new object and return
+        with jdc.copy_and_mutate(self) as new:
+            new.start = new_start
+            new.stop = new_stop
+        return new
+    
+    def pad(self, nkern):
+        """Pad the data for convolution."""
+        npad = nkern // 2
+
+        # Get integer start and stop indices
+        start = self.start or 0
+        stop = self.stop or len(self.y_buffer)
+
+        # Check that there is enough data to pad
+        assert start > npad
+        assert stop < len(self.y_buffer) - npad
+
+        # Create padded object and return
+        with jdc.copy_and_mutate(self) as padded:
+            padded.start = start - npad
+            padded.stop = stop + npad
+        return padded
 
 
 @jdc.pytree_dataclass
 class StatePathPosterior(abc.ABC):
 
     @abc.abstractmethod
-    def entropy(self, xnext: NDArray, xcurr: NDArray, w: SampleWeights):
+    def entropy(self, xnext: Array, xcurr: Array, w: SampleWeights):
         """Entropy of the state posterior."""
 
 
