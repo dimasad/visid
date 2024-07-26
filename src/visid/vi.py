@@ -63,15 +63,31 @@ class Data:
         # Return object
         return cls(jnp.asarray(y), jnp.asarray(u), start, stop)
     
+    def __getitem__(self, key):
+        """Slice the underlying data buffer."""
+        assert isinstance(key, slice)
+        return self.buffer(self.y_buffer, self.u_buffer, key.start, key.stop)
+    
     def enlarge(self, n):
         """Enlarge data slice by reducing start and increasing stop by n."""
+        assert n >= 0
         start = self.start - n
         stop = self.stop + n
-        return self.buffer(self.y_buffer, self.u_buffer, start, stop)
+        return self[start:stop]
 
     def shrink(self, n):
         """Shrink data slice by increasing start and decreasing stop by n."""
-        return self.enlarge(-n)
+        assert n >= 0
+        start = self.start + n
+        stop = self.stop - n
+        return self[start:stop]
+
+    def split(self, n):
+        """Split the dataset into `n` sections of equal or near-equal size."""
+        lens = [len(ysec) for ysec in jnp.array_split(self.y), n)]
+        stops = jnp.cumsum(lens) + self.start
+        starts = jnp.r_[self.start, stops[:-1]]
+        return [self[start:stop] for start, stop in zip(starts, stops)]
 
 
 @jdc.pytree_dataclass
