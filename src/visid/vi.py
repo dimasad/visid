@@ -27,11 +27,11 @@ class Data:
     u_buffer: Array
     """Exogenous inputs."""
 
-    start: int | None = None
-    """Start of data slice."""
+    start: int = 0
+    """Start of data slice (nonnegative)."""
 
-    stop: int | None = None
-    """Stop of data slice."""
+    stop: int
+    """Stop of data slice (nonnegative)."""
 
     def __len__(self):
         """Number of samples."""
@@ -50,56 +50,28 @@ class Data:
     @classmethod
     def buffer(cls, y, u, start=None, stop=None):
         """Convert to jax.Array and build object from buffer."""
+        # Deal with optional arguments
+        start = 0 if start is None else start
+        stop = len(y) if stop is None else stop
+
+        # Check inputs
+        assert len(y) == len(y)
+        assert start >= 0
+        assert stop >= 0
+        assert stop <= len(y)
+
+        # Return object
         return cls(jnp.asarray(y), jnp.asarray(u), start, stop)
     
-    def __getitem__(self, key):
-        """Slice the data."""
-        assert isinstance(key, slice)
-        assert key.step is None
+    def enlarge(self, n):
+        """Enlarge data slice by reducing start and increasing stop by n."""
+        start = self.start - n
+        stop = self.stop + n
+        return self.buffer(self.y_buffer, self.u_buffer, start, stop)
 
-        # Get integer start and stop indices
-        start = self.start or 0
-        stop = self.stop or len(self.y_buffer)
-
-        # Compute new start
-        if key.start is None:
-            new_start = start
-        elif key.start >= 0:
-            new_start = start + key.start
-        elif key.start < 0:
-            new_start = stop + key.start
-
-        # Compute new stop
-        if key.stop is None:
-            new_stop = stop
-        elif key.stop >= 0:
-            new_stop = start + key.stop
-        elif key.stop < 0:
-            new_stop = stop + key.stop
-        
-        # Create new object and return
-        with jdc.copy_and_mutate(self) as new:
-            new.start = new_start
-            new.stop = new_stop
-        return new
-    
-    def pad(self, nkern):
-        """Pad the data for convolution."""
-        npad = nkern // 2
-
-        # Get integer start and stop indices
-        start = self.start or 0
-        stop = self.stop or len(self.y_buffer)
-
-        # Check that there is enough data to pad
-        assert start > npad
-        assert stop < len(self.y_buffer) - npad
-
-        # Create padded object and return
-        with jdc.copy_and_mutate(self) as padded:
-            padded.start = start - npad
-            padded.stop = stop + npad
-        return padded
+    def shrink(self, n):
+        """Shrink data slice by increasing start and decreasing stop by n."""
+        return self.enlarge(-n)
 
 
 @jdc.pytree_dataclass

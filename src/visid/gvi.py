@@ -165,13 +165,13 @@ class LinearConvolutionSmoother(nn.Module):
         """Apply the linear convolution smoother."""
         # Deal with convolution boundaries
         if self.conv_mode == 'valid':
-            data = data.pad(self.nkern)
-
-        # Mask out missing values
-        y_masked = jnp.where(jnp.isnan(data.y), 0, data.y)
+            data = data.enlarge(self.nkern)
 
         # Concatenate the convolution inputs
-        sig = jnp.c_[y_masked, data.u].T
+        sig = jnp.c_[data.y, data.u].T
+
+        # Mask out missing values
+        sig = jnp.where(jnp.isnan(sig), 0, sig)
 
         # Retrieve and initialize the convolution kernel
         K_shape = (self.nx, len(sig), self.nkern)
