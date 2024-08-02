@@ -91,7 +91,7 @@ def program_args():
 
 
 def sample_system(args):
-    """Sample a linear--Gaussian system."""
+    """Randomly generate a stable linear--Gaussian system."""
     # Generate the system matrices
     A = np.random.rand(args.nx, args.nx)
     B = np.random.randn(args.nx, args.nu)
@@ -179,8 +179,6 @@ class Estimator(vi.VIBase):
     nkern: int
     C_given: typing.Optional[jax.Array] = None
 
-    Data = gvi.LinearConvolutionSmoother.Data
-
     def setup(self):
         C_given = 0.0 if self.C_given is None else self.C_given
         C_free = self.C_given is None
@@ -206,18 +204,9 @@ if __name__ == '__main__':
         args.nx, args.nu, args.ny, args.nkern, C_given=C_given
     )
 
-    # Create the data objects
-    skip0 = (args.nkern - 1) // 2
-    skip1 = args.nkern - 1 - skip0
-    data = [None] * args.Nbatch
-    for i in range(args.Nbatch):
-        start = i * args.N + skip0
-        end = (i + 1) * args.N + skip0
-        data[i] = estimator.Data(
-            y=y[start:end], u=u[start:end], 
-            conv_y=y[start-skip0:end+skip1], 
-            conv_u=u[start-skip0:end+skip1],
-        )
+    # Create data buffer and split into mini batches
+    buffer = vi.Data(y, u)
+    data = buffer.pad(args.nkern//2).split(args.Nbatch)
 
     # Initialize the Estimator
     v = estimator.init(init_key, data[0])

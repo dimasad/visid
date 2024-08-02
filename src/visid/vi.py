@@ -8,10 +8,12 @@ import jax.flatten_util
 import jax.numpy as jnp
 import jax.scipy as jsp
 import jax_dataclasses as jdc
+import numpy as np
 from jax import Array
 from jax.experimental import checkify
 
 from . import common, stats
+
 
 SampleWeights = Array | None
 """Sample weights for computing expectation."""
@@ -21,73 +23,55 @@ SampleWeights = Array | None
 class Data:
     """Data for estimation problems."""
 
-    y_buffer: Array
+    y: Array
     """Measurements."""
 
-    u_buffer: Array
+    u: Array
     """Exogenous inputs."""
-
-    start: int = 0
-    """Start of data slice (nonnegative)."""
-
-    stop: int
-    """Stop of data slice (nonnegative)."""
 
     def __len__(self):
         """Number of samples."""
+        assert len(self.y) == len(self.u)
         return len(self.y)
     
-    @property
-    def y(self):
-        """Measurements."""
-        return self.y_buffer[self.start:self.stop]
-
-    @property
-    def u(self):
-        """Measurements."""
-        return self.y_buffer[self.start:self.stop]
-    
-    @classmethod
-    def buffer(cls, y, u, start=None, stop=None):
-        """Convert to jax.Array and build object from buffer."""
-        # Deal with optional arguments
-        start = 0 if start is None else start
-        stop = len(y) if stop is None else stop
-
-        # Check inputs
-        assert len(y) == len(y)
-        assert start >= 0
-        assert stop >= 0
-        assert stop <= len(y)
-
-        # Return object
-        return cls(jnp.asarray(y), jnp.asarray(u), start, stop)
-    
-    def __getitem__(self, key):
-        """Slice the underlying data buffer."""
-        assert isinstance(key, slice)
-        return self.buffer(self.y_buffer, self.u_buffer, key.start, key.stop)
-    
-    def enlarge(self, n):
-        """Enlarge data slice by reducing start and increasing stop by n."""
-        assert n >= 0
-        start = self.start - n
-        stop = self.stop + n
-        return self[start:stop]
-
-    def shrink(self, n):
-        """Shrink data slice by increasing start and decreasing stop by n."""
-        assert n >= 0
-        start = self.start + n
-        stop = self.stop - n
-        return self[start:stop]
-
     def split(self, n):
         """Split the dataset into `n` sections of equal or near-equal size."""
-        lens = [len(ysec) for ysec in jnp.array_split(self.y), n)]
-        stops = jnp.cumsum(lens) + self.start
-        starts = jnp.r_[self.start, stops[:-1]]
-        return [self[start:stop] for start, stop in zip(starts, stops)]
+        y_split = jnp.array_split(self.y, n)
+        u_split = jnp.array_split(self.u, n)
+        return [Data(y, u) for y, u in zip(y_split, u_split)]
+
+    def pad(self, n):
+        unpadded = np.s_[n:-n]
+        return PaddedData(self.y[unpadded], self.u[unpadded], self)
+
+
+@jdc.pytree_dataclass
+class PaddedData(Data):
+    """Data with a padded buffer for, e.g., convolution."""
+
+    padded: Data
+    """The buffer augmented with padded start and end."""
+
+    @property
+    def npad(self):
+        """Number of samples padded to both ends."""
+        nextra = len(self.padded) - len(self)
+        assert nextra % 2 == 0, "Padding at left and right must be the same."
+        return nextra // 2
+
+    def split(self, n):
+        npad = self.npad
+        unpadded = super().split(n)
+        unpadded_lens = np.array([len(d) for d in unpadded])
+        padded_starts = np.r_[0, np.cumsum(unpadded_lens[:-1])]
+        padded_stops = padded_starts + unpadded_lens + 2*npad
+        
+        ret = []
+        for base, start, stop in zip(unpadded, padded_starts, padded_stops):
+            padded_y = self.padded.y[start:stop]
+            padded_u = self.padded.u[start:stop]
+            ret.append(PaddedData(base.y, base.u, Data(padded_y, padded_u)))
+        return ret
 
 
 @jdc.pytree_dataclass

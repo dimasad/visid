@@ -139,9 +139,6 @@ class LinearConvolutionSmoother(nn.Module):
     nx: int
     """Number of states."""
 
-    conv_mode: Literal['full', 'same', 'valid'] = 'valid'
-    """Mode argument passed to `jax.numpy.convolve`."""
-
     cov_repr: stats.PositiveDefiniteRepr = 'ldlt'
     """Representation of the covariance matrix."""
 
@@ -164,11 +161,17 @@ class LinearConvolutionSmoother(nn.Module):
     def __call__(self, data: Data):
         """Apply the linear convolution smoother."""
         # Deal with convolution boundaries
-        if self.conv_mode == 'valid':
-            data = data.enlarge(self.nkern)
-
+        if isinstance(data, vi.PaddedData):
+            assert self.nkern % 2 == 1, "Kernel length must be odd."
+            assert data.npad == self.nkern // 2, "Invalid padding."
+            conv_data = data.padded
+            conv_mode = 'valid'
+        else:
+            conv_data = data
+            conv_mode = 'same'
+        
         # Concatenate the convolution inputs
-        sig = jnp.c_[data.y, data.u].T
+        sig = jnp.c_[conv_data.y, conv_data.u].T
 
         # Mask out missing values
         sig = jnp.where(jnp.isnan(sig), 0, sig)
@@ -178,8 +181,12 @@ class LinearConvolutionSmoother(nn.Module):
         K = self.param('K', nn.initializers.normal(), K_shape)
 
         # Apply kernels and sum to obtain mean
-        mu = common.bvconv(sig, K, mode=self.conv_mode).sum(1).T
+        mu = common.bvconv(sig, K, mode=conv_mode).sum(1).T
 
+        # Check result size
+        assert len(mu) == len(data)
+        
+        # Return
         return GaussianSteadyStatePosterior(
             mu=mu, cond_cov=self.cond_cov(), norm_cross_cov=self.norm_cross_cov,
             tria=self.tria
