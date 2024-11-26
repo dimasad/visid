@@ -95,6 +95,27 @@ class MVNMeasurement(StochasticStateSpaceBase):
         return stats.mvn_logpdf_info(y, mean, self.meas_info())
 
 
+class GaussianTransition(StochasticStateSpaceBase):
+    """Independent Gaussian process noise model."""
+
+    nx: int
+    """Number of states."""
+
+    init_trans_info: float | jax.Array = 0.0
+    """Initial value of the transition noise information matrix log-diagonal."""
+
+    def setup(self):
+        super().setup()
+        initializer = nn.initializers.constant(self.init_trans_info)
+        self.trans_info = stats.LogDiagParam(self.nx, initializer=initializer)
+
+    @utils.jax_vectorize_method(signature='(x),(x),(u)->()')
+    def trans_logpdf(self, xnext, x, u):
+        """Log-density of a state transition, log p(x_{k+1} | x_k, u_k)."""
+        mean = self.f(x, u)
+        return stats.mvn_logpdf_info(xnext, mean, self.trans_info())
+
+
 class GaussianMeasurement(StochasticStateSpaceBase):
     """Independent Gaussian measurement noise model."""
 

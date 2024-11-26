@@ -40,6 +40,33 @@ class PositiveDefiniteMatrix(abc.ABC):
 
 
 @jdc.pytree_dataclass
+class LogDiagMatrix(PositiveDefiniteMatrix):
+    """Diagonal PD matrix represented by its log-diagonal."""
+    
+    log_d: jax.Array
+    """Logarithm of the diagonal elements."""
+
+    def __post_init__(self):
+        """Check that the dimensions are compatible."""
+        assert self.log_d.ndim == 1, "Broadcasting not supported yet."
+
+    @property
+    def logdet(self):
+        """Logarithm of the matrix determinant."""
+        return self.log_d.sum()
+
+    @property
+    def chol(self):
+        """Lower triangular Cholesky factor `S` of the matrix `P = S @ S.T`."""
+        sqrt_d = jnp.exp(0.5 * self.log_d)
+        return jnp.diag(sqrt_d)
+    
+    def __call__(self):
+        """The underlying positive-definite matrix."""
+        return jnp.diag(jnp.exp(self.log_d))
+
+
+@jdc.pytree_dataclass
 class LogCholMatrix(PositiveDefiniteMatrix):
     """PD matrix represented by the matrix logarithm of its Cholesky factor."""
     
@@ -112,6 +139,28 @@ class LDLTMatrix(PositiveDefiniteMatrix):
         D = jnp.exp(self.log_d[..., None, :])
         L = self._L
         return (L * D) @ L.swapaxes(-1, -2)
+
+
+class LogDiagParam(nn.Module):
+    """Positive definite matrix parameter using log-diagonal representation."""
+
+    n: int
+    """Dimension of the positive definite matrix."""
+
+    extra_shape: tuple[int, ...] = ()
+    """Extra broadcast shape."""
+
+    initializer: nn.initializers.Initializer = nn.initializers.zeros
+    """Initializer for the log_d parameter."""
+
+    def setup(self):
+        assert self.extra_shape == (), 'extra_shape not supported yet.'
+        self.log_d = self.param(
+            'log_d', self.initializer, self.extra_shape + (self.n,)
+        )
+    
+    def __call__(self):
+        return LogDiagMatrix(self.log_d)
 
 
 class LogCholParam(nn.Module):
