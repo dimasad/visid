@@ -107,3 +107,27 @@ class VIBase(nn.Module):
     def __call__(self, data: Data, seed=None):
         """Loss function for minimization."""
         return -self.elbo(data, seed)
+
+
+def multiseg_init(estimator, data, key):
+    """Initialize an estimator for multiple data segments."""
+    # Split the PRNG keys
+    subkeys = jnp.array(jax.random.split(key, len(data)))
+
+    # Initialize the estimator
+    v = [estimator.init(k, d) for k, d in zip(subkeys, data)]
+
+    # Remove duplicate model parameters
+    for vseg in v[1:]:
+        vseg['params'].pop('model')
+    return v
+
+
+def multiseg_cost(estimator, v, data):
+    """Cost function for the optimization of multiple data segments."""
+    # Copy the model parameters to all segments
+    for vseg in v[1:]:
+        vseg['params']['model'] = v[0]['params']['model']
+
+    # Return sum of cost of all segments
+    return sum(estimator.apply(vseg, dataseg) for vseg, dataseg in zip(v, data))
