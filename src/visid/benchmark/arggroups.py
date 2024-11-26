@@ -9,15 +9,16 @@ import jax
 import optax
 
 
-def add_jax_group(parser: argparse.ArgumentParser):
+def add_jax_group(parser: argparse.ArgumentParser, 
+                  jax_x64=None, jax_platform=None):
     group = parser.add_argument_group('jax', 'JAX configuration.')
     group.add_argument(
         '--jax-x64', dest='jax_x64', action=argparse.BooleanOptionalAction,
-        help='Use double precision (64bits) in JAX.',
+        default=jax_x64, help='Use double precision (64bits) in JAX.',
     )
     group.add_argument(
         '--jax-platform', dest='jax_platform', choices=['cpu', 'gpu'],
-        help='JAX platform (processing unit) to use',
+        default=jax_platform, help='JAX platform (processing unit) to use',
     )
     return group
 
@@ -30,7 +31,7 @@ def add_testing_group(parser: argparse.ArgumentParser):
     return group
 
 
-def add_random_group(parser: argparse.ArgumentParser):
+def add_random_group(parser: argparse.ArgumentParser, seed=0):
     group = parser.add_argument_group(
         'random', 'Random number generator configuration.'
     )
@@ -56,28 +57,30 @@ def add_output_group(parser: argparse.ArgumentParser):
     return group
 
 
-def add_stoch_optim_group(parser: argparse.ArgumentParser):
+def add_stoch_optim_group(parser: argparse.ArgumentParser, lrate0=2e-3,
+                          transition_steps=10, decay_rate=0.995, epochs=10,
+                          display_skip=100):
     group = parser.add_argument_group(
         'stoch_opt', 'Stochastic Optimization configuration.'
     )
     group.add_argument(
-        '--lrate0', default=2e-3, type=float,
+        '--lrate0', default=lrate0, type=float,
         help='Stochastic optimization initial learning rate.',
     )
     group.add_argument(
-        '--transition_steps', default=10, type=float,
+        '--transition_steps', default=transition_steps, type=float,
         help='Learning rate "transition_steps" parameter.',
     )
     group.add_argument(
-        '--decay_rate', default=0.995, type=float,
+        '--decay_rate', default=decay_rate, type=float,
         help='Learning rate "decay_rate" parameter.',
     )
     group.add_argument(
-        '--epochs', default=10, type=int,
+        '--epochs', default=epochs, type=int,
         help='Optimization epochs.',
     )
     group.add_argument(
-        '--display-skip', dest='display_skip', type=int, default=100,
+        '--display-skip', dest='display_skip', type=int, default=display_skip,
         help='Display optimization progress every `n` iterations.'
     )
 
