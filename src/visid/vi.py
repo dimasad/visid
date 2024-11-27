@@ -10,7 +10,6 @@ import jax.scipy as jsp
 import jax_dataclasses as jdc
 import numpy as np
 from jax import Array
-from jax.experimental import checkify
 
 from . import common, stats
 

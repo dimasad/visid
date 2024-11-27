@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
 
-from . import common, stats
+from . import common, stats, vi
 
 
 class StochasticStateSpaceBase(nn.Module):
@@ -47,6 +47,23 @@ class StochasticStateSpaceBase(nn.Module):
             w = jnp.ones(nsamp) / nsamp
         logpdf = jax.vmap(self.path_meas_logpdf, in_axes=(None,0,None))(y, x, u)
         return jnp.sum(w * logpdf, axis=0)
+    
+    def free_sim(self, x0, u):
+        """Simulate the system without noise."""
+        scanfun = lambda x, u: (self.f(x, u), [x, self.h(x, u)])
+        carry, (xpath, ypath) = jax.lax.scan(scanfun, x0, u)
+        return xpath, ypath
+    
+    def predictor(self, x0: jax.Array, data: vi.Data, K: jax.Array):
+        """Run one-step-ahead predictor with linear corrections."""
+        def scanfun(xpred, datum):
+            ypred = self.h(xpred, datum.u)
+            err = datum.y - ypred
+            xcorr = xpred + K @ err
+            xpred_next = self.f(xcorr, datum.u)
+            return xpred_next, (xpred, xcorr, ypred, err)
+        carry, paths = jax.lax.scan(scanfun, x0, data)
+        return paths
 
 
 class MVNTransition(StochasticStateSpaceBase):
