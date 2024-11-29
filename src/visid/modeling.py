@@ -9,6 +9,7 @@ import hedeut as utils
 import jax
 import jax.numpy as jnp
 import jax.scipy as jsp
+import scipy.linalg
 
 from . import common, stats, vi
 
@@ -47,15 +48,18 @@ class StochasticStateSpaceBase(nn.Module):
             w = jnp.ones(nsamp) / nsamp
         logpdf = jax.vmap(self.path_meas_logpdf, in_axes=(None,0,None))(y, x, u)
         return jnp.sum(w * logpdf, axis=0)
-    
+
     def free_sim(self, x0, u):
         """Simulate the system without noise."""
         scanfun = lambda x, u: (self.f(x, u), [x, self.h(x, u)])
         carry, (xpath, ypath) = jax.lax.scan(scanfun, x0, u)
         return xpath, ypath
-    
-    def predictor(self, x0: jax.Array, data: vi.Data, K: jax.Array):
+
+    def filter(self, x0: jax.Array, data: vi.Data, K=None):
         """Run one-step-ahead predictor with linear corrections."""
+        if K is None:
+            K = self.ss_kf(x0, jnp.mean(data.u, axis=0))
+    	
         def scanfun(xpred, datum):
             ypred = self.h(xpred, datum.u)
             err = datum.y - ypred
@@ -64,6 +68,19 @@ class StochasticStateSpaceBase(nn.Module):
             return xpred_next, (xpred, xcorr, ypred, err)
         carry, paths = jax.lax.scan(scanfun, x0, data)
         return paths
+
+    def ss_kf(self, x=None, u=None):
+        """Compute steady-state Kalman gain."""
+        x = jnp.zeros(self.nx) if x is None else x
+        u = jnp.zeros(self.nu) if u is None else u
+        A = jax.jacfwd(self.f)(x, u)
+        C = jax.jacfwd(self.h)(x, u)
+        Q = jnp.linalg.inv(self.trans_info()())
+        R = jnp.linalg.inv(self.meas_info()())
+
+        Ppred = scipy.linalg.solve_discrete_are(A.T, C.T, Q, R)
+        K = Ppred @ C.T @ jnp.linalg.inv(C @ Ppred @ C.T + R)
+        return K
 
 
 class MVNTransition(StochasticStateSpaceBase):
@@ -157,6 +174,10 @@ class GaussianMeasurement(StochasticStateSpaceBase):
 
         logpdf = jsp.stats.norm.logpdf(y_masked, mean, sigma)
         return jnp.sum(unmasked * logpdf)
+    
+    @property
+    def meas_info(self):
+        return lambda: stats.LogDiagMatrix(-self.meas_log_sigma)
 
 
 class LinearTransitions(nn.Module):
