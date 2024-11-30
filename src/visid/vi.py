@@ -1,7 +1,6 @@
 """Base classes for variational inference in state-space models."""
 
 import abc
-from typing import Literal
 
 import flax.linen as nn
 import jax.flatten_util
@@ -10,9 +9,7 @@ import jax.scipy as jsp
 import jax_dataclasses as jdc
 import numpy as np
 from jax import Array
-
-from . import common, stats
-
+from scipy import optimize
 
 SampleWeights = Array | None
 """Sample weights for computing expectation."""
@@ -130,3 +127,63 @@ def multiseg_cost(estimator, v, data):
 
     # Return sum of cost of all segments
     return sum(estimator.apply(vseg, dataseg) for vseg, dataseg in zip(v, data))
+
+
+def fixed_model_init(estimator, data, key):
+    """Initialize an estimator with fixed model parameters."""
+    # Initialize the estimator
+    v = estimator.init(key, data)
+
+    # Remove model parameters
+    v['params'].pop('model')
+    return v
+
+def fixed_model_cost(estimator, v, data, model_params):
+    """Cost function of estimator with fixed model parameters."""
+    v['params']['model'] = model_params
+    return estimator.apply(v, data)
+
+
+class Optimizer:
+    """Deterministic optimization interface for variational inference."""
+
+    def __init__(self, estimator, v, data, multiseg=False, model_params=None):
+        dec0, unravel = jax.flatten_util.ravel_pytree(v)
+        if multiseg:
+            cost = lambda dec: multiseg_cost(estimator, unravel(dec), data)
+        elif model_params is not None:
+            cost = lambda dec: fixed_model_cost(
+                estimator, unravel(dec), data, model_params
+            )
+        else:
+            cost = lambda dec: estimator.apply(unravel(dec), data)
+        
+
+        self.dec0 = dec0
+        """Initial decision variable vector."""
+
+        self.unravel = unravel
+        """Unravel the decision vector into a flax module pytree."""
+
+        self.cost = jax.jit(cost)
+        """Cost function."""
+
+        self.grad = jax.jit(jax.grad(cost))
+        """Gradient of cost function."""
+
+        self.hess = jax.jit(jax.jacfwd(self.grad))
+        """Hessian of cost function."""
+        
+        self.hvp = jax.jit(lambda dec, v: jax.jvp(self.grad, (dec,), (v,))[1])
+        """Product of cost function Hessian with vector."""
+
+    @staticmethod
+    def ravel(v):
+        return jax.flatten_util.ravel_pytree(v)[0]
+    
+    def __call__(self, **kwargs):
+        sol = optimize.minimize(
+            self.cost, self.dec0, jac=self.grad, hessp=self.hvp, **kwargs
+        )
+        v = self.unravel(sol.x)
+        return v, sol
