@@ -1,4 +1,4 @@
-"""Stochastic differential equation (SDE) discretization."""
+"""Stochastic differential equation (SDE) discretization and utilities."""
 
 import jax
 import jax.numpy as jnp
@@ -7,10 +7,10 @@ import flax.linen as nn
 import hedeut as utils
 
 
-class EulerMaruyamaScheme(nn.Module):
-    """Euler-Maruyama SDE discretization scheme."""
+class Euler(nn.Module):
+    """Euler SDE discretization scheme."""
 
-    dt: float
+    dt: float = 1.0
     """Discretization time interval."""
 
     @utils.jax_vectorize_method(signature='(x),(u)->(x)')
