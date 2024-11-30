@@ -268,3 +268,30 @@ class LinearMVNModel(MVNTransition, MVNMeasurement, LinearModel):
 
 class LinearGaussianModel(MVNTransition, GaussianMeasurement, LinearModel):
     """Discrete-time dynamic system with independent Gaussian measurements."""
+
+
+def compare(model, states, datasets):
+    """Get model responses against datasets"""
+    # Initialize Results
+    ysim = [None] * len(datasets)
+    ypred = [None] * len(datasets)
+    xtrans = [None] * len(datasets)
+    mdltrans = [None] * len(datasets)
+
+    # Iterate over datasets
+    for i, (x, data) in enumerate(zip(states, datasets)):
+        # Free simulation
+        ysim[i] = model.free_sim(x[0], data.u)[1]
+
+        # One-step-ahead predictor
+        ypred[i] = model.filter(x[0], data)[2]
+
+        # Smoothed transition error
+        if hasattr(model, 'fc'):
+            xtrans[i] = jnp.diff(x, axis=0) / model.dt
+            mdltrans[i] = model.fc(x, data.u)[:-1]
+        else:
+            xtrans[i] = x[1:]
+            mdltrans[i] = model.f(x, data.u)[:-1]
+
+    return ysim, ypred, xtrans, mdltrans
