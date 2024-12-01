@@ -273,6 +273,7 @@ class LinearGaussianModel(MVNTransition, GaussianMeasurement, LinearModel):
 def compare(model, states, datasets):
     """Get model responses against datasets"""
     # Initialize Results
+    y = [None] * len(datasets)
     ysim = [None] * len(datasets)
     ypred = [None] * len(datasets)
     xtrans = [None] * len(datasets)
@@ -280,6 +281,9 @@ def compare(model, states, datasets):
 
     # Iterate over datasets
     for i, (x, data) in enumerate(zip(states, datasets)):
+        # Output path
+        y[i] = model.h(x, data.u)
+
         # Free simulation
         ysim[i] = model.free_sim(x[0], data.u)[1]
 
@@ -294,4 +298,4 @@ def compare(model, states, datasets):
             xtrans[i] = x[1:]
             mdltrans[i] = model.f(x, data.u)[:-1]
 
-    return ysim, ypred, xtrans, mdltrans
+    return y, ysim, ypred, xtrans, mdltrans
