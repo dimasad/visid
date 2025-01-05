@@ -174,7 +174,8 @@ class Optimizer:
         self.hess = jax.jit(jax.jacfwd(self.grad))
         """Hessian of cost function."""
         
-        self.hvp = jax.jit(lambda dec, v: jax.jvp(self.grad, (dec,), (v,))[1])
+        hvp = jax.jit(lambda dec, v: jax.jvp(self.grad, (dec,), (v,))[1])
+        self.hvp = lambda dec, v: hvp(dec, jnp.asarray(v, float))
         """Product of cost function Hessian with vector."""
 
     @staticmethod
