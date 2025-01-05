@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "visid"
-version = "0.1"
+version = "0.2.dev0"
 authors = [
   { name="Dimas Abreu Archanjo Dutra", email="dimas.dutra@mail.wvu.edu" },
 ]
